@@ -112,3 +112,16 @@ struct ConnAccount: Codable, Identifiable, Hashable {
     let id: String
     let label: String
 }
+
+struct ProjectInfo: Codable, Identifiable, Hashable {
+    let ref: String; let name: String; let region: String
+    var id: String { ref }
+}
+struct TableInfo: Codable, Identifiable, Hashable {
+    let schema: String; let table: String
+    var id: String { "\(schema).\(table)" }
+}
+struct ServiceTableSpec: Hashable {
+    let schema: String; let table: String; let role: String   // "user_table" | "related"
+    var userIdCol: String = "id"; var emailCol: String = "email"
+}

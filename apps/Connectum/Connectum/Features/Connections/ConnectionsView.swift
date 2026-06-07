@@ -63,6 +63,8 @@ struct ConnectionsView: View {
                     field("API Token", $axToken, secure: true); field("레이블", $axLabel)
                     addButton { await vm.addAxiom(token: axToken, label: axLabel); axToken = "" }
                 }
+
+                ServiceWizardView()
             }
             .padding(Spacing.xl).frame(maxWidth: 640, alignment: .leading)
         }

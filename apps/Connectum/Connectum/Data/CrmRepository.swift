@@ -20,6 +20,9 @@ protocol CrmDataProviding: Sendable {
     func connectSupabasePAT(pat: String, label: String) async throws
     func connectAmplitude(apiKey: String, secretKey: String, region: String, label: String) async throws
     func connectAxiom(token: String, label: String) async throws -> [String]
+    func listProjects(supabaseAccountId: String) async throws -> [ProjectInfo]
+    func listTables(supabaseAccountId: String, projectRef: String) async throws -> [TableInfo]
+    func createService(name: String, supabaseAccountId: String, projectRef: String, tables: [ServiceTableSpec], amplitudeAccountId: String?, axiomAccountId: String?) async throws
 }
 
 struct CrmRepository: CrmDataProviding {
@@ -144,5 +147,37 @@ struct CrmRepository: CrmDataProviding {
         struct R: Decodable { let account_id: String?; let datasets: [String]? }
         let r: R = try await client.functions.invoke("axiom-connect", options: FunctionInvokeOptions(body: B(token: token, label: label)))
         return r.datasets ?? []
+    }
+    func listProjects(supabaseAccountId: String) async throws -> [ProjectInfo] {
+        struct B: Encodable { let account_id: String }
+        struct R: Decodable { let projects: [ProjectInfo] }
+        let r: R = try await client.functions.invoke("supabase-list-projects", options: FunctionInvokeOptions(body: B(account_id: supabaseAccountId)))
+        return r.projects
+    }
+    func listTables(supabaseAccountId: String, projectRef: String) async throws -> [TableInfo] {
+        struct B: Encodable { let account_id: String; let project_ref: String }
+        struct R: Decodable { let tables: [TableInfo] }
+        let r: R = try await client.functions.invoke("supabase-list-tables", options: FunctionInvokeOptions(body: B(account_id: supabaseAccountId, project_ref: projectRef)))
+        return r.tables
+    }
+    func createService(name: String, supabaseAccountId: String, projectRef: String, tables: [ServiceTableSpec], amplitudeAccountId: String?, axiomAccountId: String?) async throws {
+        struct NewService: Encodable {
+            let name: String; let supabase_account_id: String; let supabase_project_ref: String
+            let amplitude_account_id: String?; let axiom_account_id: String?
+        }
+        struct CreatedId: Decodable { let id: String }
+        let created: CreatedId = try await client.from("service")
+            .insert(NewService(name: name, supabase_account_id: supabaseAccountId, supabase_project_ref: projectRef,
+                               amplitude_account_id: amplitudeAccountId, axiom_account_id: axiomAccountId))
+            .select("id").single().execute().value
+        struct NewTable: Encodable {
+            let service_id: String; let source_schema: String; let source_table: String
+            let role: String; let column_map: [String: String]; let cursor_column: String
+        }
+        let rows: [NewTable] = tables.map { t in
+            let cm = t.role == "user_table" ? ["user_id": t.userIdCol, "email": t.emailCol] : ["pk": "id"]
+            return NewTable(service_id: created.id, source_schema: t.schema, source_table: t.table, role: t.role, column_map: cm, cursor_column: "created_at")
+        }
+        if !rows.isEmpty { try await client.from("service_table").insert(rows).execute() }
     }
 }

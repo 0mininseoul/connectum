@@ -63,4 +63,11 @@ final class CrmModelsTests: XCTestCase {
         XCTAssertTrue(v.config.profiledOnly)
         XCTAssertEqual(v.config.sortKey, "email")
     }
+
+    func testDecodeProjectAndTableInfo() throws {
+        let p = try JSONDecoder().decode(ProjectInfo.self, from: #"{"ref":"abc","name":"Proj","region":"ap-northeast-2"}"#.data(using: .utf8)!)
+        XCTAssertEqual(p.ref, "abc"); XCTAssertEqual(p.id, "abc")
+        let t = try JSONDecoder().decode(TableInfo.self, from: #"{"schema":"public","table":"users"}"#.data(using: .utf8)!)
+        XCTAssertEqual(t.table, "users"); XCTAssertEqual(t.id, "public.users")
+    }
 }
