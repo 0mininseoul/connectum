@@ -14,6 +14,12 @@ protocol CrmDataProviding: Sendable {
     func fetchMetrics(serviceId: String) async throws -> DashboardMetrics
     func fetchViews() async throws -> [SavedView]
     func createView(name: String, config: ViewConfig) async throws
+    func fetchSupabaseAccounts() async throws -> [ConnAccount]
+    func fetchAmplitudeAccounts() async throws -> [ConnAccount]
+    func fetchAxiomAccounts() async throws -> [ConnAccount]
+    func connectSupabasePAT(pat: String, label: String) async throws
+    func connectAmplitude(apiKey: String, secretKey: String, region: String, label: String) async throws
+    func connectAxiom(token: String, label: String) async throws -> [String]
 }
 
 struct CrmRepository: CrmDataProviding {
@@ -113,5 +119,30 @@ struct CrmRepository: CrmDataProviding {
     func createView(name: String, config: ViewConfig) async throws {
         struct NewView: Encodable { let name: String; let scope: String; let config: ViewConfig }
         try await client.from("view").insert(NewView(name: name, scope: "workspace", config: config)).execute()
+    }
+    func fetchSupabaseAccounts() async throws -> [ConnAccount] {
+        try await client.from("supabase_account").select("id,label").order("created_at").execute().value
+    }
+    func fetchAmplitudeAccounts() async throws -> [ConnAccount] {
+        try await client.from("amplitude_account").select("id,label").order("created_at").execute().value
+    }
+    func fetchAxiomAccounts() async throws -> [ConnAccount] {
+        try await client.from("axiom_account").select("id,label").order("created_at").execute().value
+    }
+    func connectSupabasePAT(pat: String, label: String) async throws {
+        struct B: Encodable { let pat: String; let label: String }
+        struct R: Decodable { let account_id: String? }
+        let _: R = try await client.functions.invoke("supabase-connect-pat", options: FunctionInvokeOptions(body: B(pat: pat, label: label)))
+    }
+    func connectAmplitude(apiKey: String, secretKey: String, region: String, label: String) async throws {
+        struct B: Encodable { let api_key: String; let secret_key: String; let region: String; let label: String }
+        struct R: Decodable { let account_id: String? }
+        let _: R = try await client.functions.invoke("amplitude-connect", options: FunctionInvokeOptions(body: B(api_key: apiKey, secret_key: secretKey, region: region, label: label)))
+    }
+    func connectAxiom(token: String, label: String) async throws -> [String] {
+        struct B: Encodable { let token: String; let label: String }
+        struct R: Decodable { let account_id: String?; let datasets: [String]? }
+        let r: R = try await client.functions.invoke("axiom-connect", options: FunctionInvokeOptions(body: B(token: token, label: label)))
+        return r.datasets ?? []
     }
 }
