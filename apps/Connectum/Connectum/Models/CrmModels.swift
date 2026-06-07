@@ -79,6 +79,19 @@ struct PageBlockRow: Codable, Identifiable, Hashable {
     }
 }
 
+struct NoteBlock: Identifiable, Hashable {
+    let id: String
+    var type: String
+    var text: String
+}
+struct NoteBlockRow: Codable, Identifiable, Hashable {
+    let id: String
+    let type: String
+    let content: TextContent
+    struct TextContent: Codable, Hashable { let text: String? }
+    var asNote: NoteBlock { NoteBlock(id: id, type: type, text: content.text ?? "") }
+}
+
 struct HistoryEntry: Codable, Identifiable, Hashable {
     let id: String
     let entryDate: String
