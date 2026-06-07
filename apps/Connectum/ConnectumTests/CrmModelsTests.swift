@@ -51,4 +51,16 @@ final class CrmModelsTests: XCTestCase {
         XCTAssertEqual(e.imageUrl, "https://x/y.jpg")
         XCTAssertEqual(e.memo, "인터뷰 메모")
     }
+
+    func testDecodeSavedView() throws {
+        let json = """
+        {"id":"55555555-5555-5555-5555-555555555555","name":"미컨택만",
+         "config":{"contactFilter":"not_contacted","profiledOnly":true,"sortKey":"email","sortAsc":true}}
+        """.data(using: .utf8)!
+        let v = try JSONDecoder().decode(SavedView.self, from: json)
+        XCTAssertEqual(v.name, "미컨택만")
+        XCTAssertEqual(v.config.contactFilter, "not_contacted")
+        XCTAssertTrue(v.config.profiledOnly)
+        XCTAssertEqual(v.config.sortKey, "email")
+    }
 }
