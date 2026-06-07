@@ -34,6 +34,19 @@ async function handleSync(req: Request): Promise<Response> {
     const r: Record<string, unknown> = {};
     r.supabase = await callFn("supabase-sync-tables", { service_id: s.id });
     if (s.amplitude_account_id) r.amplitude = await callFn("amplitude-sync", { service_id: s.id });
+
+    // Auto-generate AI summaries for matched users that still lack one (bounded
+    // per run so a periodic cron fills them gradually; summarize-user hash-skips
+    // unchanged inputs to control cost).
+    const { data: pending } = await db.from("crm_user")
+      .select("id").eq("service_id", s.id).is("ai_summary", null).neq("amplitude_profile", "{}").limit(20);
+    let summarized = 0;
+    for (const u of pending ?? []) {
+      const res = await callFn("summarize-user", { crm_user_id: u.id });
+      if (res.status === 200) summarized++;
+    }
+    r.summarized = summarized;
+
     results[(s.name as string) ?? s.id] = r;
   }
   return new Response(JSON.stringify({ services: services?.length ?? 0, results }), {
