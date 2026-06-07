@@ -1,30 +1,44 @@
 import { corsHeaders } from "../_shared/cors.ts";
 import { adminClient } from "../_shared/admin.ts";
-import { planWindows } from "../_shared/chunk.ts";
 
-// Phase 0 skeleton: opens a sync_run, plans chunked windows from the cursor,
-// records the plan, and closes the run. Phase 1 fills each window with real
-// Supabase/Amplitude/Axiom fetches + upserts. Callable by pg_cron and the app.
+// Orchestrator: for each service, trigger the Supabase table sync and (when an
+// Amplitude account is configured) the Amplitude event sync. Invoked by pg_cron
+// (all services) or by the app ({ service_id } for one). Sub-syncs run as internal
+// function calls so each keeps its own sync_run/cursor bookkeeping.
+const FN_BASE = `${Deno.env.get("SUPABASE_URL")}/functions/v1`;
+const SVC_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+
+async function callFn(name: string, body: unknown): Promise<{ status: number; body: unknown }> {
+  const res = await fetch(`${FN_BASE}/${name}`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${SVC_KEY}`, "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const text = await res.text();
+  try { return { status: res.status, body: JSON.parse(text) }; } catch { return { status: res.status, body: text }; }
+}
+
 async function handleSync(req: Request): Promise<Response> {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   const db = adminClient();
-  const { data: run } = await db.from("sync_run")
-    .insert({ source: "amplitude", status: "running" }).select("id").single();
-  try {
-    const since = new Date(Date.now() - 24 * 3600 * 1000); // Phase 1 reads sync_cursor instead
-    const windows = planWindows(since, new Date(), 2);
-    // Phase 1: for each window → fetch + map + upsert; advance sync_cursor.
-    await db.from("sync_run").update({
-      status: "success", finished_at: new Date().toISOString(),
-      stats: { planned_windows: windows.length },
-    }).eq("id", run!.id);
-    return new Response(JSON.stringify({ run_id: run!.id, planned_windows: windows.length }), {
-      status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
-  } catch (e) {
-    await db.from("sync_run").update({ status: "error", finished_at: new Date().toISOString(), error: String(e) }).eq("id", run!.id);
-    return new Response(JSON.stringify({ error: String(e) }), { status: 500, headers: corsHeaders });
+  const body = await req.json().catch(() => ({}));
+  const onlyService = (body as { service_id?: string })?.service_id;
+
+  let query = db.from("service").select("id, name, amplitude_account_id");
+  if (onlyService) query = query.eq("id", onlyService);
+  const { data: services, error } = await query;
+  if (error) return new Response(JSON.stringify({ error: String(error) }), { status: 500, headers: corsHeaders });
+
+  const results: Record<string, unknown> = {};
+  for (const s of services ?? []) {
+    const r: Record<string, unknown> = {};
+    r.supabase = await callFn("supabase-sync-tables", { service_id: s.id });
+    if (s.amplitude_account_id) r.amplitude = await callFn("amplitude-sync", { service_id: s.id });
+    results[(s.name as string) ?? s.id] = r;
   }
+  return new Response(JSON.stringify({ services: services?.length ?? 0, results }), {
+    status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
 }
 
 if (import.meta.main) {
