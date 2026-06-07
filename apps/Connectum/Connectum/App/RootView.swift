@@ -19,6 +19,7 @@ struct AuthenticatedShell: View {
         TabView {
             OperationalDBView().tabItem { Text("운영 DB") }
             DashboardView().tabItem { Text("대시보드") }
+            ConnectionsView().tabItem { Text("연동") }
         }
         .frame(minWidth: 1000, minHeight: 640)
     }

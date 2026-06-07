@@ -107,3 +107,8 @@ struct SavedView: Codable, Identifiable, Hashable {
     let name: String
     let config: ViewConfig
 }
+
+struct ConnAccount: Codable, Identifiable, Hashable {
+    let id: String
+    let label: String
+}
