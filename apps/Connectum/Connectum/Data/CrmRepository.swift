@@ -9,6 +9,10 @@ protocol CrmDataProviding: Sendable {
     func regenerateSummary(crmUserId: String) async throws -> String
     func fetchChannelRecords(crmUserId: String) async throws -> [ChannelRecord]
     func addChannelRecord(crmUserId: String, channel: String, occurredAt: String, body: String) async throws
+    func fetchNoteBlocks(crmUserId: String) async throws -> [NoteBlock]
+    func addNoteBlock(crmUserId: String, text: String) async throws
+    func updateNoteBlock(id: String, text: String) async throws
+    func deleteNoteBlock(id: String) async throws
     func fetchHistory(crmUserId: String) async throws -> [HistoryEntry]
     func addHistory(crmUserId: String, entryDate: String, memo: String, imageData: Data?, fileExt: String) async throws
     func fetchMetrics(serviceId: String) async throws -> DashboardMetrics
@@ -82,6 +86,28 @@ struct CrmRepository: CrmDataProviding {
             crm_user_id: crmUserId, type: "channel_record", position: Date().timeIntervalSince1970,
             content: ["channel": channel, "occurred_at": occurredAt, "body": body])
         try await client.from("page_block").insert(block).execute()
+    }
+    func fetchNoteBlocks(crmUserId: String) async throws -> [NoteBlock] {
+        let rows: [NoteBlockRow] = try await client.from("page_block")
+            .select("id,type,content")
+            .eq("crm_user_id", value: crmUserId)
+            .eq("type", value: "text")
+            .order("position", ascending: true)
+            .execute().value
+        return rows.map { $0.asNote }
+    }
+    func addNoteBlock(crmUserId: String, text: String) async throws {
+        struct NewBlock: Encodable { let crm_user_id: String; let type: String; let position: Double; let content: [String: String] }
+        try await client.from("page_block")
+            .insert(NewBlock(crm_user_id: crmUserId, type: "text", position: Date().timeIntervalSince1970, content: ["text": text]))
+            .execute()
+    }
+    func updateNoteBlock(id: String, text: String) async throws {
+        struct Upd: Encodable { let content: [String: String] }
+        try await client.from("page_block").update(Upd(content: ["text": text])).eq("id", value: id).execute()
+    }
+    func deleteNoteBlock(id: String) async throws {
+        try await client.from("page_block").delete().eq("id", value: id).execute()
     }
     func fetchHistory(crmUserId: String) async throws -> [HistoryEntry] {
         try await client.from("history_entry")
