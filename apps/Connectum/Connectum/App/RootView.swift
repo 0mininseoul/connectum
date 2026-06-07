@@ -16,7 +16,10 @@ struct RootView: View {
 
 struct AuthenticatedShell: View {
     var body: some View {
-        OperationalDBView()
-            .frame(minWidth: 1000, minHeight: 640)
+        TabView {
+            OperationalDBView().tabItem { Text("운영 DB") }
+            DashboardView().tabItem { Text("대시보드") }
+        }
+        .frame(minWidth: 1000, minHeight: 640)
     }
 }

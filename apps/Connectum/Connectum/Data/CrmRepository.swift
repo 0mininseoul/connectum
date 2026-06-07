@@ -11,6 +11,7 @@ protocol CrmDataProviding: Sendable {
     func addChannelRecord(crmUserId: String, channel: String, occurredAt: String, body: String) async throws
     func fetchHistory(crmUserId: String) async throws -> [HistoryEntry]
     func addHistory(crmUserId: String, entryDate: String, memo: String, imageData: Data?, fileExt: String) async throws
+    func fetchMetrics(serviceId: String) async throws -> DashboardMetrics
 }
 
 struct CrmRepository: CrmDataProviding {
@@ -90,5 +91,18 @@ struct CrmRepository: CrmDataProviding {
         try await client.from("history_entry")
             .insert(NewEntry(crm_user_id: crmUserId, entry_date: entryDate, image_url: imageUrl, memo: memo, position: Date().timeIntervalSince1970))
             .execute()
+    }
+    func fetchMetrics(serviceId: String) async throws -> DashboardMetrics {
+        func count(_ build: (PostgrestFilterBuilder) -> PostgrestFilterBuilder) async throws -> Int {
+            let q = client.from("crm_user").select("*", head: true, count: .exact).eq("service_id", value: serviceId)
+            let res = try await build(q).execute()
+            return res.count ?? 0
+        }
+        let total = try await count { $0 }
+        let contacted = try await count { $0.eq("contact_status", value: "contacted") }
+        let profiled = try await count { $0.neq("amplitude_profile", value: "{}") }
+        let weekAgo = ISO8601DateFormatter().string(from: Date().addingTimeInterval(-7*24*3600))
+        let recent = try await count { $0.gte("created_at", value: weekAgo) }
+        return DashboardMetrics(total: total, contacted: contacted, profiled: profiled, recentSignups: recent)
     }
 }

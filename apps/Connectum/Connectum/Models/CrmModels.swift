@@ -86,3 +86,11 @@ struct HistoryEntry: Codable, Identifiable, Hashable {
     let memo: String?
     enum CodingKeys: String, CodingKey { case id, memo, entryDate = "entry_date", imageUrl = "image_url" }
 }
+
+struct DashboardMetrics: Equatable {
+    var total = 0
+    var contacted = 0
+    var profiled = 0
+    var recentSignups = 0
+    var contactRate: Double { total == 0 ? 0 : Double(contacted) / Double(total) }
+}
