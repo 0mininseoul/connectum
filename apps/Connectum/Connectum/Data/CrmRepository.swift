@@ -12,6 +12,8 @@ protocol CrmDataProviding: Sendable {
     func fetchHistory(crmUserId: String) async throws -> [HistoryEntry]
     func addHistory(crmUserId: String, entryDate: String, memo: String, imageData: Data?, fileExt: String) async throws
     func fetchMetrics(serviceId: String) async throws -> DashboardMetrics
+    func fetchViews() async throws -> [SavedView]
+    func createView(name: String, config: ViewConfig) async throws
 }
 
 struct CrmRepository: CrmDataProviding {
@@ -104,5 +106,12 @@ struct CrmRepository: CrmDataProviding {
         let weekAgo = ISO8601DateFormatter().string(from: Date().addingTimeInterval(-7*24*3600))
         let recent = try await count { $0.gte("created_at", value: weekAgo) }
         return DashboardMetrics(total: total, contacted: contacted, profiled: profiled, recentSignups: recent)
+    }
+    func fetchViews() async throws -> [SavedView] {
+        try await client.from("view").select("id,name,config").order("created_at", ascending: true).execute().value
+    }
+    func createView(name: String, config: ViewConfig) async throws {
+        struct NewView: Encodable { let name: String; let scope: String; let config: ViewConfig }
+        try await client.from("view").insert(NewView(name: name, scope: "workspace", config: config)).execute()
     }
 }
