@@ -78,3 +78,11 @@ struct PageBlockRow: Codable, Identifiable, Hashable {
         ChannelRecord(id: id, channel: content.channel ?? "memo", occurredAt: content.occurredAt, body: content.body ?? "")
     }
 }
+
+struct HistoryEntry: Codable, Identifiable, Hashable {
+    let id: String
+    let entryDate: String
+    let imageUrl: String?
+    let memo: String?
+    enum CodingKeys: String, CodingKey { case id, memo, entryDate = "entry_date", imageUrl = "image_url" }
+}
