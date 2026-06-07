@@ -28,4 +28,17 @@ final class CrmModelsTests: XCTestCase {
         XCTAssertNil(u.amplitudeProfile?.os)
         XCTAssertEqual(u.aiSummary, "3 line summary")
     }
+
+    func testDecodeChannelRecordRow() throws {
+        let json = """
+        {"id":"33333333-3333-3333-3333-333333333333",
+         "content":{"channel":"email","occurred_at":"2026-06-01","body":"온보딩 안내 메일 발송"}}
+        """.data(using: .utf8)!
+        let row = try JSONDecoder().decode(PageBlockRow.self, from: json)
+        let rec = row.asChannelRecord
+        XCTAssertEqual(rec.id, "33333333-3333-3333-3333-333333333333")
+        XCTAssertEqual(rec.channel, "email")
+        XCTAssertEqual(rec.occurredAt, "2026-06-01")
+        XCTAssertEqual(rec.body, "온보딩 안내 메일 발송")
+    }
 }

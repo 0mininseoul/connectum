@@ -6,6 +6,9 @@ protocol CrmDataProviding: Sendable {
     func fetchUsers(serviceId: String) async throws -> [CrmUser]
     func fetchEvents(crmUserId: String, limit: Int) async throws -> [CrmUserEvent]
     func setContactStatus(crmUserId: String, status: String) async throws
+    func regenerateSummary(crmUserId: String) async throws -> String
+    func fetchChannelRecords(crmUserId: String) async throws -> [ChannelRecord]
+    func addChannelRecord(crmUserId: String, channel: String, occurredAt: String, body: String) async throws
 }
 
 struct CrmRepository: CrmDataProviding {
@@ -37,5 +40,33 @@ struct CrmRepository: CrmDataProviding {
             .update(["contact_status": status])
             .eq("id", value: crmUserId)
             .execute()
+    }
+    func regenerateSummary(crmUserId: String) async throws -> String {
+        struct Body: Encodable { let crm_user_id: String; let force: Bool }
+        struct Resp: Decodable { let ai_summary: String? }
+        let resp: Resp = try await client.functions.invoke(
+            "summarize-user",
+            options: FunctionInvokeOptions(body: Body(crm_user_id: crmUserId, force: true))
+        )
+        return resp.ai_summary ?? ""
+    }
+    func fetchChannelRecords(crmUserId: String) async throws -> [ChannelRecord] {
+        let rows: [PageBlockRow] = try await client.from("page_block")
+            .select("id,content")
+            .eq("crm_user_id", value: crmUserId)
+            .eq("type", value: "channel_record")
+            .order("position", ascending: false)
+            .execute().value
+        return rows.map { $0.asChannelRecord }
+    }
+    func addChannelRecord(crmUserId: String, channel: String, occurredAt: String, body: String) async throws {
+        struct NewBlock: Encodable {
+            let crm_user_id: String; let type: String; let position: Double
+            let content: [String: String]
+        }
+        let block = NewBlock(
+            crm_user_id: crmUserId, type: "channel_record", position: Date().timeIntervalSince1970,
+            content: ["channel": channel, "occurred_at": occurredAt, "body": body])
+        try await client.from("page_block").insert(block).execute()
     }
 }

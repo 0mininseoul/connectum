@@ -56,3 +56,25 @@ struct CrmUserEvent: Codable, Identifiable, Hashable {
         case eventType = "event_type", eventTime = "event_time"
     }
 }
+
+struct ChannelRecord: Identifiable, Hashable {
+    let id: String
+    let channel: String
+    let occurredAt: String?
+    let body: String
+}
+
+// page_block row whose `content` jsonb holds a channel record.
+struct PageBlockRow: Codable, Identifiable, Hashable {
+    let id: String
+    let content: Content
+    struct Content: Codable, Hashable {
+        let channel: String?
+        let occurredAt: String?
+        let body: String?
+        enum CodingKeys: String, CodingKey { case channel, body, occurredAt = "occurred_at" }
+    }
+    var asChannelRecord: ChannelRecord {
+        ChannelRecord(id: id, channel: content.channel ?? "memo", occurredAt: content.occurredAt, body: content.body ?? "")
+    }
+}
