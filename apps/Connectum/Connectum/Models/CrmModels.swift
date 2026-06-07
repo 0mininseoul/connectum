@@ -94,3 +94,16 @@ struct DashboardMetrics: Equatable {
     var recentSignups = 0
     var contactRate: Double { total == 0 ? 0 : Double(contacted) / Double(total) }
 }
+
+struct ViewConfig: Codable, Hashable {
+    var contactFilter: String = "all"   // all | contacted | not_contacted
+    var profiledOnly: Bool = false
+    var sortKey: String = "created_at"  // created_at | email | contact_status
+    var sortAsc: Bool = false
+}
+
+struct SavedView: Codable, Identifiable, Hashable {
+    let id: String
+    let name: String
+    let config: ViewConfig
+}
