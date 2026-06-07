@@ -2,8 +2,13 @@ import { corsHeaders } from "../_shared/cors.ts";
 import { adminClient } from "../_shared/admin.ts";
 import { buildTokenRequest, parseTokenResponse } from "./exchange.ts";
 
-// App sends { code, label } after ASWebAuthenticationSession returns the OAuth code.
+// App sends { code, label } after the OAuth redirect lands on the app's loopback
+// listener. Supabase OAuth requires https or localhost callbacks (custom schemes
+// are rejected), so we use an RFC 8252 loopback redirect. The redirect_uri here
+// MUST match the one registered on the OAuth app and used in the authorize step.
 // Client secret stays here (server). Tokens are written to Vault; only refs land in the table.
+const REDIRECT_URI = Deno.env.get("CONNECTUM_OAUTH_REDIRECT_URI") ?? "http://127.0.0.1:53682/callback";
+
 async function handleOauthSupabase(req: Request): Promise<Response> {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   try {
@@ -12,7 +17,7 @@ async function handleOauthSupabase(req: Request): Promise<Response> {
       code,
       clientId: Deno.env.get("SUPABASE_OAUTH_CLIENT_ID")!,
       clientSecret: Deno.env.get("SUPABASE_OAUTH_CLIENT_SECRET")!,
-      redirectUri: "connectum://oauth/callback",
+      redirectUri: REDIRECT_URI,
     });
     const tokenRes = await fetch(built.url, { method: "POST", headers: built.headers, body: built.body });
     if (!tokenRes.ok) {
