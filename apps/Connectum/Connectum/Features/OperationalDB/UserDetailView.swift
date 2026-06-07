@@ -48,6 +48,7 @@ struct UserDetailView: View {
                     profileRow("최근 활동", p?.lastEventTime)
                 }
                 RecordsSection(vm: vm)
+                NotesSection(crmUserId: vm.user.id)
                 card(title: "최근 이벤트") {
                     if vm.events.isEmpty { Text("없음").font(Typography.caption).foregroundStyle(Palette.muted) }
                     else {
