@@ -3,7 +3,7 @@ export function amplitudeHost(region?: string): string {
 }
 
 // Amplitude Export expects YYYYMMDDTHH (note the literal 'T' before the hour).
-function stampHour(d: Date): string {
+export function stampHour(d: Date): string {
   const p = (n: number) => String(n).padStart(2, "0");
   return `${d.getUTCFullYear()}${p(d.getUTCMonth() + 1)}${p(d.getUTCDate())}T${p(d.getUTCHours())}`;
 }
@@ -17,4 +17,9 @@ export function exportProbeUrl(region: string | undefined, now: Date = new Date(
 
 export function basicAuth(key: string, secret: string): string {
   return "Basic " + btoa(`${key}:${secret}`);
+}
+
+// General export window URL (start inclusive hour, end inclusive hour), YYYYMMDDTHH.
+export function exportUrl(region: string | undefined, start: Date, end: Date): string {
+  return `https://${amplitudeHost(region)}/api/2/export?start=${stampHour(start)}&end=${stampHour(end)}`;
 }
