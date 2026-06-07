@@ -1,0 +1,42 @@
+{
+  "sourceLanguage" : "ko",
+  "strings" : {
+    "auth.login.title" : {
+      "localizations" : {
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "로그인" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Sign in" } }
+      }
+    },
+    "auth.login.email" : {
+      "localizations" : {
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "이메일" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Email" } }
+      }
+    },
+    "auth.login.password" : {
+      "localizations" : {
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "비밀번호" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Password" } }
+      }
+    },
+    "auth.login.submit" : {
+      "localizations" : {
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "로그인" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Sign in" } }
+      }
+    },
+    "auth.error.empty" : {
+      "localizations" : {
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "이메일과 비밀번호를 입력하세요." } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Enter email and password." } }
+      }
+    },
+    "auth.error.failed" : {
+      "localizations" : {
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "로그인에 실패했습니다." } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Sign in failed." } }
+      }
+    }
+  },
+  "version" : "1.0"
+}

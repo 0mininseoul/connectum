@@ -1,0 +1,22 @@
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Supabase
+supabase/.branches
+supabase/.temp
+supabase/.env
+
+# Deno
+deno.lock
+
+# Xcode / Swift
+apps/Connectum/Connectum.xcodeproj/
+apps/Connectum/.build/
+apps/Connectum/DerivedData/
+**/xcuserdata/
+.DS_Store
+
+# Node (none expected, guard anyway)
+node_modules/
