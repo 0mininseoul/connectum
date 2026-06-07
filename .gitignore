@@ -20,3 +20,6 @@ apps/Connectum/DerivedData/
 
 # Node (none expected, guard anyway)
 node_modules/
+
+# GCP / local secrets
+.secrets/
