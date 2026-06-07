@@ -4,11 +4,12 @@ import SwiftUI
 // bundled font is unavailable so the app still renders during early setup.
 enum Typography {
     static func paperlogy(_ size: CGFloat, _ weight: Font.Weight = .regular) -> Font {
+        // PostScript names of the bundled Paperlogy weights (numbered family).
         let name: String
         switch weight {
-        case .medium:   name = "Paperlogy-Medium"
-        case .semibold: name = "Paperlogy-SemiBold"
-        default:        name = "Paperlogy-Regular"
+        case .medium:   name = "Paperlogy-5Medium"
+        case .semibold: name = "Paperlogy-6SemiBold"
+        default:        name = "Paperlogy-4Regular"
         }
         return Font.custom(name, size: size)
     }

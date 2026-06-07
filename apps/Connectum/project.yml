@@ -12,7 +12,13 @@ targets:
   Connectum:
     type: application
     platform: macOS
-    sources: [Connectum]
+    sources:
+      - path: Connectum
+        excludes:
+          - "Resources/Fonts/**"
+      - path: Connectum/Resources/Fonts
+        name: Fonts
+        type: folder
     info:
       path: Connectum/Info.plist
       properties:
