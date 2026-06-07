@@ -1,0 +1,45 @@
+name: Connectum
+options:
+  bundleIdPrefix: com.connectum
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+packages:
+  Supabase:
+    url: https://github.com/supabase/supabase-swift
+    from: "2.0.0"
+targets:
+  Connectum:
+    type: application
+    platform: macOS
+    sources: [Connectum]
+    info:
+      path: Connectum/Info.plist
+      properties:
+        CFBundleDisplayName: Connectum
+        ATSApplicationFontsPath: Fonts
+        LSMinimumSystemVersion: "14.0"
+        CFBundleLocalizations:
+          - ko
+          - en
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.connectum.app
+        GENERATE_INFOPLIST_FILE: NO
+        SWIFT_VERSION: "6.0"
+        ENABLE_HARDENED_RUNTIME: YES
+    dependencies:
+      - package: Supabase
+  ConnectumTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources: [ConnectumTests]
+    dependencies:
+      - target: Connectum
+schemes:
+  Connectum:
+    build:
+      targets:
+        Connectum: all
+    test:
+      targets: [ConnectumTests]
