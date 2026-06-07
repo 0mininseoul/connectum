@@ -2,9 +2,19 @@ import SwiftUI
 
 struct UserDetailView: View {
     @State private var vm: UserDetailViewModel
+    @State private var tab = 0
     init(user: CrmUser) { _vm = State(initialValue: UserDetailViewModel(user: user)) }
 
     var body: some View {
+        VStack(spacing: 0) {
+            Picker("", selection: $tab) { Text("개요").tag(0); Text("히스토리").tag(1) }
+                .pickerStyle(.segmented).labelsHidden().padding(Spacing.sm).frame(maxWidth: 280)
+            if tab == 0 { overview } else { HistoryTabView(crmUserId: vm.user.id) }
+        }
+        .background(Palette.canvas)
+    }
+
+    private var overview: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: Spacing.xl) {
                 VStack(alignment: .leading, spacing: Spacing.xs) {
