@@ -41,4 +41,14 @@ final class CrmModelsTests: XCTestCase {
         XCTAssertEqual(rec.occurredAt, "2026-06-01")
         XCTAssertEqual(rec.body, "온보딩 안내 메일 발송")
     }
+
+    func testDecodeHistoryEntry() throws {
+        let json = """
+        {"id":"44444444-4444-4444-4444-444444444444","entry_date":"2026-06-01","image_url":"https://x/y.jpg","memo":"인터뷰 메모"}
+        """.data(using: .utf8)!
+        let e = try JSONDecoder().decode(HistoryEntry.self, from: json)
+        XCTAssertEqual(e.entryDate, "2026-06-01")
+        XCTAssertEqual(e.imageUrl, "https://x/y.jpg")
+        XCTAssertEqual(e.memo, "인터뷰 메모")
+    }
 }
