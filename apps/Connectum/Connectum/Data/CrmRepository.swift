@@ -27,6 +27,8 @@ protocol CrmDataProviding: Sendable {
     func listProjects(supabaseAccountId: String) async throws -> [ProjectInfo]
     func listTables(supabaseAccountId: String, projectRef: String) async throws -> [TableInfo]
     func createService(name: String, supabaseAccountId: String, projectRef: String, tables: [ServiceTableSpec], amplitudeAccountId: String?, axiomAccountId: String?) async throws
+    func listColumns(supabaseAccountId: String, projectRef: String, schema: String, table: String) async throws -> [ColumnInfo]
+    func fetchDisplayColumns(serviceId: String) async throws -> [String]
 }
 
 struct CrmRepository: CrmDataProviding {
@@ -39,7 +41,7 @@ struct CrmRepository: CrmDataProviding {
     }
     func fetchUsers(serviceId: String) async throws -> [CrmUser] {
         try await client.from("crm_user")
-            .select("id,source_user_id,email,display_name,contact_status,amplitude_profile,ai_summary,last_synced_at,created_at")
+            .select("id,source_user_id,email,display_name,contact_status,amplitude_profile,supabase_profile,ai_summary,last_synced_at,created_at")
             .eq("service_id", value: serviceId)
             .order("created_at", ascending: false)
             .limit(1000)
@@ -199,11 +201,31 @@ struct CrmRepository: CrmDataProviding {
         struct NewTable: Encodable {
             let service_id: String; let source_schema: String; let source_table: String
             let role: String; let column_map: [String: String]; let cursor_column: String
+            let display_columns: [String]
         }
         let rows: [NewTable] = tables.map { t in
             let cm = t.role == "user_table" ? ["user_id": t.userIdCol, "email": t.emailCol] : ["pk": "id"]
-            return NewTable(service_id: created.id, source_schema: t.schema, source_table: t.table, role: t.role, column_map: cm, cursor_column: "created_at")
+            return NewTable(service_id: created.id, source_schema: t.schema, source_table: t.table, role: t.role,
+                            column_map: cm, cursor_column: "created_at",
+                            display_columns: t.role == "user_table" ? t.displayColumns : [])
         }
         if !rows.isEmpty { try await client.from("service_table").insert(rows).execute() }
+    }
+
+    func listColumns(supabaseAccountId: String, projectRef: String, schema: String, table: String) async throws -> [ColumnInfo] {
+        struct B: Encodable { let account_id: String; let project_ref: String; let schema: String; let table: String }
+        struct R: Decodable { let columns: [ColumnInfo] }
+        let r: R = try await client.functions.invoke(
+            "supabase-list-columns",
+            options: FunctionInvokeOptions(body: B(account_id: supabaseAccountId, project_ref: projectRef, schema: schema, table: table)))
+        return r.columns
+    }
+
+    func fetchDisplayColumns(serviceId: String) async throws -> [String] {
+        struct Row: Decodable { let display_columns: [String] }
+        let rows: [Row] = try await client.from("service_table")
+            .select("display_columns").eq("service_id", value: serviceId).eq("role", value: "user_table")
+            .execute().value
+        return rows.first?.display_columns ?? []
     }
 }
