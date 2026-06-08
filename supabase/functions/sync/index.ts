@@ -42,7 +42,7 @@ async function handleSync(req: Request): Promise<Response> {
     // per run so a periodic cron fills them gradually; summarize-user hash-skips
     // unchanged inputs to control cost).
     const { data: pending } = await db.from("crm_user")
-      .select("id").eq("service_id", s.id).is("ai_summary", null).neq("amplitude_profile", "{}").limit(20);
+      .select("id").eq("service_id", s.id).is("ai_summary", null).neq("amplitude_profile", "{}").limit(5);
     let summarized = 0;
     for (const u of pending ?? []) {
       const res = await callFn("summarize-user", { crm_user_id: u.id });
