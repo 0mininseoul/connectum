@@ -9,7 +9,8 @@ struct ConnectumApp: App {
                 .tint(.white)                  // controls + default text never render light (black)
         }
         .windowStyle(.hiddenTitleBar)
-        .windowResizability(.contentSize)
+        .windowResizability(.contentMinSize)
+        .defaultSize(width: 1280, height: 820)
 
         // Connectum settings — opens with Cmd+,
         Settings {
