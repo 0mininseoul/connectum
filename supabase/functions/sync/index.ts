@@ -6,12 +6,15 @@ import { adminClient } from "../_shared/admin.ts";
 // (all services) or by the app ({ service_id } for one). Sub-syncs run as internal
 // function calls so each keeps its own sync_run/cursor bookkeeping.
 const FN_BASE = `${Deno.env.get("SUPABASE_URL")}/functions/v1`;
-const SVC_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+// Internal calls must present a valid JWT to the API gateway. The anon key is a
+// project JWT; the service_role key is a non-JWT secret on newer projects (which
+// the gateway rejects). The sub-functions do their own service-role DB work.
+const FN_AUTH = Deno.env.get("SUPABASE_ANON_KEY") ?? Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
 
 async function callFn(name: string, body: unknown): Promise<{ status: number; body: unknown }> {
   const res = await fetch(`${FN_BASE}/${name}`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${SVC_KEY}`, "Content-Type": "application/json" },
+    headers: { Authorization: `Bearer ${FN_AUTH}`, "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
   const text = await res.text();
