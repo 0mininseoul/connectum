@@ -375,6 +375,25 @@ deno_version = 2
 # [edge_runtime.secrets]
 # secret_key = "env(SECRET_VALUE)"
 
+[functions.oauth-supabase-callback]
+# Supabase OAuth redirects browser users here without an Authorization header.
+# The function only forwards code/state to the local Connectum loopback listener.
+verify_jwt = false
+
+[functions.supabase-sync-tables]
+# Called by the sync orchestrator with CONNECTUM_INTERNAL_FUNCTION_SECRET.
+# Hosted projects may use sb_publishable keys that are not JWTs, so the
+# gateway JWT check is disabled and the function performs its own internal auth.
+verify_jwt = false
+
+[functions.ai-connect]
+# PKCE code -> token exchange; requires the user JWT.
+verify_jwt = true
+
+[functions.ai-chat]
+# Data-grounded chat tool loop; requires the user JWT.
+verify_jwt = true
+
 [analytics]
 enabled = true
 port = 54327
