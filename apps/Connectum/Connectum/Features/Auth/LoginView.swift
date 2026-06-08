@@ -21,6 +21,7 @@ struct LoginView: View {
                     .overlay(RoundedRectangle(cornerRadius: Radius.button).stroke(Palette.hairline))
             }
             .frame(width: 320)
+            .onSubmit { Task { await vm.signIn() } }   // Enter submits
 
             if let err = vm.errorMessage {
                 Text(err).font(Typography.caption).foregroundStyle(Palette.accentRed)
