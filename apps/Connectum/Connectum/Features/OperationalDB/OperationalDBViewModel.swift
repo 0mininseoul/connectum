@@ -4,8 +4,6 @@ import Observation
 @MainActor
 @Observable
 final class OperationalDBViewModel {
-    var services: [Service] = []
-    var selectedServiceId: String?
     var users: [CrmUser] = []
     var search: String = ""
     var isLoading = false
@@ -40,30 +38,18 @@ final class OperationalDBViewModel {
         return list
     }
 
-    func loadServices() async {
+    func load(serviceId: String) async {
         isLoading = true; defer { isLoading = false }
         do {
-            services = try await repo.fetchServices()
-            if selectedServiceId == nil { selectedServiceId = services.first?.id }
-            if let sid = selectedServiceId { await loadUsers(serviceId: sid) }
-            await loadViews()
+            users = try await repo.fetchUsers(serviceId: serviceId)
+            savedViews = try await repo.fetchViews()
         } catch { errorMessage = String(describing: error) }
     }
-    func loadViews() async {
-        do { savedViews = try await repo.fetchViews() } catch { errorMessage = String(describing: error) }
-    }
+
     func saveView(name: String) async {
-        do { try await repo.createView(name: name, config: config); await loadViews() }
+        do { try await repo.createView(name: name, config: config); savedViews = try await repo.fetchViews() }
         catch { errorMessage = String(describing: error) }
     }
+
     func applyView(_ v: SavedView) { config = v.config }
-    func loadUsers(serviceId: String) async {
-        isLoading = true; defer { isLoading = false }
-        do { users = try await repo.fetchUsers(serviceId: serviceId) }
-        catch { errorMessage = String(describing: error) }
-    }
-    func selectService(_ id: String) async {
-        selectedServiceId = id
-        await loadUsers(serviceId: id)
-    }
 }

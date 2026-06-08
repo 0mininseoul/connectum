@@ -38,7 +38,7 @@ struct LoginView: View {
             .disabled(vm.isLoading)
         }
         .padding(Spacing.xxl)
-        .frame(minWidth: 900, minHeight: 600)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Palette.canvas)
         .foregroundStyle(Palette.body)
     }

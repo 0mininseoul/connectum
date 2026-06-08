@@ -12,18 +12,11 @@ targets:
   Connectum:
     type: application
     platform: macOS
-    sources:
-      - path: Connectum
-        excludes:
-          - "Resources/Fonts/**"
-      - path: Connectum/Resources/Fonts
-        name: Fonts
-        type: folder
+    sources: [Connectum]
     info:
       path: Connectum/Info.plist
       properties:
         CFBundleDisplayName: Connectum
-        ATSApplicationFontsPath: Fonts
         LSMinimumSystemVersion: "14.0"
         CFBundleLocalizations:
           - ko
