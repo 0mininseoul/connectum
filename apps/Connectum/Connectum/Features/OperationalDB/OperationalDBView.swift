@@ -57,9 +57,17 @@ struct OperationalDBView: View {
                         Text(u.contactStatus == "contacted" ? "완료" : "—")
                             .foregroundStyle(u.contactStatus == "contacted" ? Palette.accentGreen : Palette.muted)
                     }.width(56)
-                    TableColumn("OS") { u in Text(u.amplitudeProfile?.os ?? "—").foregroundStyle(Palette.muted) }.width(120)
-                    TableColumn("지역") { u in Text(u.amplitudeProfile?.country ?? "—").foregroundStyle(Palette.muted) }.width(130)
-                    TableColumn("가입일") { u in Text(String((u.createdAt ?? "").prefix(10))).foregroundStyle(Palette.muted) }.width(100)
+                    // User-selected source columns (from the service wizard) — or sensible
+                    // defaults from the synced profiles when none are chosen.
+                    if vm.displayColumns.isEmpty {
+                        TableColumn("OS") { u in Text(u.amplitudeProfile?.os ?? "—").foregroundStyle(Palette.muted) }.width(120)
+                        TableColumn("지역") { u in Text(u.amplitudeProfile?.country ?? "—").foregroundStyle(Palette.muted) }.width(130)
+                        TableColumn("가입일") { u in Text(String((u.createdAt ?? "").prefix(10))).foregroundStyle(Palette.muted) }.width(110)
+                    } else {
+                        TableColumnForEach(vm.displayColumns, id: \.self) { col in
+                            TableColumn(col) { u in Text(u.profileValue(col)).lineLimit(1).foregroundStyle(Palette.muted) }
+                        }
+                    }
                     TableColumn("AI 총평") { u in
                         Text((u.aiSummary ?? "—").replacingOccurrences(of: "\n", with: " "))
                             .lineLimit(1).foregroundStyle(Palette.muted)

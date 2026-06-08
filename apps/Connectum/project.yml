@@ -2,7 +2,7 @@ name: Connectum
 options:
   bundleIdPrefix: com.connectum
   deploymentTarget:
-    macOS: "14.0"
+    macOS: "14.4"
   createIntermediateGroups: true
 packages:
   Supabase:

@@ -10,6 +10,7 @@ final class OperationalDBViewModel {
     var errorMessage: String?
     var config = ViewConfig()
     var savedViews: [SavedView] = []
+    var displayColumns: [String] = []
 
     private let repo: CrmDataProviding
     init(repo: CrmDataProviding = CrmRepository()) { self.repo = repo }
@@ -43,6 +44,7 @@ final class OperationalDBViewModel {
         do {
             users = try await repo.fetchUsers(serviceId: serviceId)
             savedViews = try await repo.fetchViews()
+            displayColumns = try await repo.fetchDisplayColumns(serviceId: serviceId)
         } catch { errorMessage = String(describing: error) }
     }
 
