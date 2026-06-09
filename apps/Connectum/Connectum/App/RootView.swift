@@ -50,7 +50,7 @@ struct MainShell: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Palette.canvas)
             .inspector(isPresented: $shell.aiPanelVisible) {
-                AIChatView(vm: shell.aiChat, serviceId: shell.selectedDataServiceId)
+                AIChatView(vm: shell.aiChat, serviceId: shell.selectedDataServiceId, isVisible: shell.aiPanelVisible)
                     .inspectorColumnWidth(min: 320, ideal: 380, max: 520)
             }
         }
