@@ -131,11 +131,20 @@ struct OperationalDBView: View {
             syncSortOrderFromConfig()
         }
         .onChange(of: selection) { _, id in
-            if id != nil, !searchFocused { tableFocused = true }
             // Keep an open detail (side/popup) in sync with arrow-key navigation.
             if let id, let user = vm.filteredUsers.first(where: { $0.id == id }) {
                 if sideUser != nil { sideUser = user }
                 if sheetUser != nil { sheetUser = user }
+            }
+            // Re-assert table focus AFTER the detail panel rebuilds (the .id swap
+            // recreates the detail and steals first-responder), so repeated
+            // arrow-key navigation keeps reaching the table.
+            if id != nil, !searchFocused {
+                tableFocused = true
+                Task { @MainActor in
+                    await Task.yield()
+                    if !searchFocused { tableFocused = true }
+                }
             }
         }
         .onChange(of: detailOpenModeRaw) { _, _ in

@@ -3,7 +3,9 @@ import SwiftUI
 struct AIChatView: View {
     @Bindable var vm: AIChatViewModel
     let serviceId: String?
+    var isVisible: Bool = true
     @FocusState private var inputFocused: Bool
+    @State private var focusTask: Task<Void, Never>?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -22,12 +24,29 @@ struct AIChatView: View {
             await vm.bind(serviceId: serviceId)
         }
         .task {
-            // Focus the input as soon as the panel mounts (decoupled from the
-            // network bind) so typing right after Cmd+I goes straight in.
-            try? await Task.sleep(for: .milliseconds(150))
-            if vm.connected { inputFocused = true }
+            focusInput()
+        }
+        .onChange(of: isVisible) { _, visible in
+            // The inspector keeps this view alive across Cmd+I toggles, so .task
+            // won't re-run on reopen — focus on each open, stop trying on close.
+            if visible { focusInput() } else { focusTask?.cancel() }
         }
         .onChange(of: serviceId) { _, new in Task { await vm.bind(serviceId: new) } }
+    }
+
+    // Focus the input right after Cmd+I. Retries briefly because the inspector
+    // slide-in / window-key timing can drop a single early focus attempt.
+    // Replaces any in-flight attempt so retries never overlap or outlive the open.
+    private func focusInput() {
+        focusTask?.cancel()
+        focusTask = Task { @MainActor in
+            for _ in 0 ..< 12 {
+                if Task.isCancelled { return }
+                if vm.connected { inputFocused = true }
+                try? await Task.sleep(for: .milliseconds(50))
+                if inputFocused { return }
+            }
+        }
     }
 
     private var header: some View {
