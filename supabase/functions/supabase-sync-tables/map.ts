@@ -6,6 +6,10 @@ export function rowToCrmUser(row: Row, columnMap: Record<string, string>, servic
   const email = emailCol != null && row[emailCol] != null ? String(row[emailCol]) : null;
   return { service_id: serviceId, source_user_id: String(row[idCol]), email, supabase_profile: row };
 }
+export function filterExcludedCrmUsers(users: CrmUserUpsert[], excludedSourceUserIds: Set<string>): CrmUserUpsert[] {
+  if (excludedSourceUserIds.size === 0) return users;
+  return users.filter((user) => !excludedSourceUserIds.has(user.source_user_id));
+}
 export interface MirroredUpsert { service_id: string; service_table_id: string; source_pk: string; data: Row; }
 export function rowToMirroredRow(row: Row, columnMap: Record<string, string>, serviceTableId: string, serviceId: string): MirroredUpsert {
   const pkCol = columnMap.pk ?? "id";

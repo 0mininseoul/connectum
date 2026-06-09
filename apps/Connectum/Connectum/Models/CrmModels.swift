@@ -4,7 +4,47 @@ struct Service: Codable, Identifiable, Hashable {
     let id: String
     let name: String
     let supabaseProjectRef: String?
-    enum CodingKeys: String, CodingKey { case id, name, supabaseProjectRef = "supabase_project_ref" }
+    let supabaseProjectName: String?
+    let supabaseAccountId: String?
+    let amplitudeAccountId: String?
+    let amplitudeProjectName: String?
+    let axiomAccountId: String?
+    let axiomDataset: String?
+
+    init(
+        id: String,
+        name: String,
+        supabaseProjectRef: String?,
+        supabaseProjectName: String? = nil,
+        supabaseAccountId: String? = nil,
+        amplitudeAccountId: String? = nil,
+        amplitudeProjectName: String? = nil,
+        axiomAccountId: String? = nil,
+        axiomDataset: String? = nil
+    ) {
+        self.id = id
+        self.name = name
+        self.supabaseProjectRef = supabaseProjectRef
+        self.supabaseProjectName = supabaseProjectName
+        self.supabaseAccountId = supabaseAccountId
+        self.amplitudeAccountId = amplitudeAccountId
+        self.amplitudeProjectName = amplitudeProjectName
+        self.axiomAccountId = axiomAccountId
+        self.axiomDataset = axiomDataset
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, name
+        case supabaseProjectRef = "supabase_project_ref"
+        case supabaseProjectName = "supabase_project_name"
+        case supabaseAccountId = "supabase_account_id"
+        case amplitudeAccountId = "amplitude_account_id"
+        case amplitudeProjectName = "amplitude_project_name"
+        case axiomAccountId = "axiom_account_id"
+        case axiomDataset = "axiom_dataset"
+    }
+
+    var isDraft: Bool { id.hasPrefix("draft:") }
 }
 
 struct AmplitudeProfile: Codable, Hashable {
@@ -138,7 +178,7 @@ struct HistoryEntry: Codable, Identifiable, Hashable {
     enum CodingKeys: String, CodingKey { case id, memo, entryDate = "entry_date", imageUrl = "image_url" }
 }
 
-struct DashboardMetrics: Equatable {
+struct DashboardMetrics: Codable, Equatable {
     var total = 0
     var contacted = 0
     var profiled = 0
@@ -147,10 +187,32 @@ struct DashboardMetrics: Equatable {
 }
 
 struct ViewConfig: Codable, Hashable {
-    var contactFilter: String = "all"   // all | contacted | not_contacted
-    var profiledOnly: Bool = false
-    var sortKey: String = "created_at"  // created_at | email | contact_status
-    var sortAsc: Bool = false
+    var contactFilter: String   // all | contacted | not_contacted
+    var profiledOnly: Bool
+    var sortKey: String         // created_at | email | contact_status
+    var sortAsc: Bool
+    var primaryColumn: String
+    // JSON-encoded SwiftUI TableColumnCustomization (column order + visibility) for this view.
+    var customization: String
+
+    init(contactFilter: String = "all", profiledOnly: Bool = false,
+         sortKey: String = "created_at", sortAsc: Bool = false,
+         primaryColumn: String = "__email", customization: String = "") {
+        self.contactFilter = contactFilter; self.profiledOnly = profiledOnly
+        self.sortKey = sortKey; self.sortAsc = sortAsc
+        self.primaryColumn = primaryColumn; self.customization = customization
+    }
+    // Tolerant decode: older stored configs (and the wizard) omit newer keys.
+    enum CodingKeys: String, CodingKey { case contactFilter, profiledOnly, sortKey, sortAsc, primaryColumn, customization }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        contactFilter = try c.decodeIfPresent(String.self, forKey: .contactFilter) ?? "all"
+        profiledOnly = try c.decodeIfPresent(Bool.self, forKey: .profiledOnly) ?? false
+        sortKey = try c.decodeIfPresent(String.self, forKey: .sortKey) ?? "created_at"
+        sortAsc = try c.decodeIfPresent(Bool.self, forKey: .sortAsc) ?? false
+        primaryColumn = try c.decodeIfPresent(String.self, forKey: .primaryColumn) ?? "__email"
+        customization = try c.decodeIfPresent(String.self, forKey: .customization) ?? ""
+    }
 }
 
 struct SavedView: Codable, Identifiable, Hashable {
@@ -162,6 +224,30 @@ struct SavedView: Codable, Identifiable, Hashable {
 struct ConnAccount: Codable, Identifiable, Hashable {
     let id: String
     let label: String
+    let accountName: String?
+    let projectName: String?
+    let datasets: [String]?
+
+    init(
+        id: String,
+        label: String,
+        accountName: String? = nil,
+        projectName: String? = nil,
+        datasets: [String]? = nil
+    ) {
+        self.id = id
+        self.label = label
+        self.accountName = accountName
+        self.projectName = projectName
+        self.datasets = datasets
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, label
+        case accountName = "account_name"
+        case projectName = "project_name"
+        case datasets
+    }
 }
 
 struct ProjectInfo: Codable, Identifiable, Hashable {
@@ -181,4 +267,24 @@ struct ServiceTableSpec: Hashable {
     let schema: String; let table: String; let role: String   // "user_table" | "related"
     var userIdCol: String = "id"; var emailCol: String = "email"
     var displayColumns: [String] = []   // columns to show in the operational-DB table
+}
+
+// Workspace-global Claude (AI) account. Metadata only; tokens live in Vault.
+struct AIAccount: Codable, Identifiable, Hashable {
+    let id: String
+    let label: String
+    let accountName: String?
+    enum CodingKeys: String, CodingKey {
+        case id, label
+        case accountName = "account_name"
+    }
+}
+
+// One turn in the AI chat panel (session-memory only).
+struct ChatMessage: Identifiable, Hashable {
+    enum Role { case user, assistant }
+    let id = UUID()
+    let role: Role
+    var text: String
+    var isStreaming: Bool = false
 }

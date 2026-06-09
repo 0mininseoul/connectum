@@ -33,6 +33,9 @@ targets:
     type: bundle.unit-test
     platform: macOS
     sources: [ConnectumTests]
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
     dependencies:
       - target: Connectum
 schemes:

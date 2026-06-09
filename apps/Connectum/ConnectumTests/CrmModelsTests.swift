@@ -62,6 +62,16 @@ final class CrmModelsTests: XCTestCase {
         XCTAssertEqual(v.config.contactFilter, "not_contacted")
         XCTAssertTrue(v.config.profiledOnly)
         XCTAssertEqual(v.config.sortKey, "email")
+        XCTAssertEqual(v.config.primaryColumn, OperationalDBViewModel.emailCol)
+    }
+
+    func testDecodeSavedViewWithPrimaryColumn() throws {
+        let json = """
+        {"id":"77777777-7777-7777-7777-777777777777","name":"이름 기준",
+         "config":{"contactFilter":"all","profiledOnly":false,"sortKey":"created_at","sortAsc":false,"primaryColumn":"name"}}
+        """.data(using: .utf8)!
+        let v = try JSONDecoder().decode(SavedView.self, from: json)
+        XCTAssertEqual(v.config.primaryColumn, "name")
     }
 
     func testDecodeNoteBlockRow() throws {
@@ -78,5 +88,25 @@ final class CrmModelsTests: XCTestCase {
         XCTAssertEqual(p.ref, "abc"); XCTAssertEqual(p.id, "abc")
         let t = try JSONDecoder().decode(TableInfo.self, from: #"{"schema":"public","table":"users"}"#.data(using: .utf8)!)
         XCTAssertEqual(t.table, "users"); XCTAssertEqual(t.id, "public.users")
+    }
+
+    func testDecodeConnectionDisplayMetadata() throws {
+        let service = try JSONDecoder().decode(Service.self, from: """
+        {"id":"service-1","name":"Archy","supabase_project_ref":"ydot",
+         "supabase_project_name":"Archy","supabase_account_id":"supabase-1",
+         "amplitude_account_id":"amplitude-1","amplitude_project_name":"Archy 2 MVP - Prod",
+         "axiom_account_id":"axiom-1","axiom_dataset":"prod-logs"}
+        """.data(using: .utf8)!)
+        XCTAssertEqual(service.supabaseProjectName, "Archy")
+        XCTAssertEqual(service.amplitudeProjectName, "Archy 2 MVP - Prod")
+        XCTAssertEqual(service.axiomDataset, "prod-logs")
+
+        let account = try JSONDecoder().decode(ConnAccount.self, from: """
+        {"id":"account-1","label":"PAT (dev)","account_name":"ym5373@gachon.ac.kr",
+         "project_name":"Archy 2 MVP - Prod","datasets":["prod-logs"]}
+        """.data(using: .utf8)!)
+        XCTAssertEqual(account.accountName, "ym5373@gachon.ac.kr")
+        XCTAssertEqual(account.projectName, "Archy 2 MVP - Prod")
+        XCTAssertEqual(account.datasets, ["prod-logs"])
     }
 }

@@ -8,7 +8,7 @@ import { parseDatasets } from "./datasets.ts";
 async function handle(req: Request): Promise<Response> {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   try {
-    const { token, label } = await req.json();
+    const { token, label, account_name } = await req.json();
     const res = await fetch("https://api.axiom.co/v1/datasets", {
       headers: { Authorization: `Bearer ${token}` },
     });
@@ -22,7 +22,12 @@ async function handle(req: Request): Promise<Response> {
     await setSecret(ref, token);
     const db = adminClient();
     const { data, error } = await db.from("axiom_account")
-      .insert({ label: label ?? "Axiom", api_token_ref: ref }).select("id").single();
+      .insert({
+        label: label ?? account_name ?? "Axiom",
+        account_name: account_name ?? null,
+        datasets,
+        api_token_ref: ref,
+      }).select("id").single();
     if (error) throw error;
 
     return new Response(JSON.stringify({ account_id: data.id, datasets }), {

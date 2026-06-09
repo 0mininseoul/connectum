@@ -8,7 +8,7 @@ import { exportProbeUrl, basicAuth } from "../_shared/amplitude.ts";
 async function handle(req: Request): Promise<Response> {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   try {
-    const { api_key, secret_key, region, label } = await req.json();
+    const { api_key, secret_key, region, label, project_name, account_name } = await req.json();
     const res = await fetch(exportProbeUrl(region), { headers: { Authorization: basicAuth(api_key, secret_key) } });
     await res.body?.cancel();
     if (res.status !== 200 && res.status !== 404) {
@@ -21,7 +21,10 @@ async function handle(req: Request): Promise<Response> {
     await setSecret(secretRef, secret_key);
     const db = adminClient();
     const { data, error } = await db.from("amplitude_account").insert({
-      label: label ?? "Amplitude", region: (region ?? "us").toLowerCase(),
+      label: label ?? account_name ?? project_name ?? "Amplitude",
+      account_name: account_name ?? null,
+      project_name: project_name ?? null,
+      region: (region ?? "us").toLowerCase(),
       api_key_ref: keyRef, secret_key_ref: secretRef,
     }).select("id").single();
     if (error) throw error;
