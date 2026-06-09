@@ -1,30 +1,58 @@
 import SwiftUI
 
-// Connectum settings (Cmd+,). Lets the team point the app at a backend
-// (writes ~/Library/Application Support/Connectum/config.json) and shows info.
+// Connectum settings (Cmd+,). Keep app-internal backend configuration out of
+// the user-facing preferences surface.
 struct SettingsView: View {
-    @State private var url = ""
-    @State private var anon = ""
-    @State private var saved = false
+    @State private var authVM = AuthViewModel()
+    @AppStorage(AppPreferenceKeys.userDetailOpenMode) private var userDetailOpenMode = UserDetailOpenMode.side.rawValue
 
     var body: some View {
         VStack(alignment: .leading, spacing: Spacing.xl) {
             Text("설정").font(Typography.cardTitle).foregroundStyle(Palette.ink)
 
             VStack(alignment: .leading, spacing: Spacing.sm) {
-                Text("백엔드 연결").font(Typography.caption).foregroundStyle(Palette.muted)
-                field("Supabase URL", $url)
-                field("Anon Key", $anon)
+                Text("로그인 정보").font(Typography.caption).foregroundStyle(Palette.muted)
                 HStack(spacing: Spacing.sm) {
-                    Button("저장") { save() }
-                        .buttonStyle(.plain)
-                        .font(Typography.body).foregroundStyle(Palette.ctaText)
-                        .padding(.horizontal, Spacing.lg).frame(height: 32)
-                        .background(Palette.ctaFill).clipShape(Capsule())
-                    if saved {
-                        Text("저장됨 · 앱 재시작 후 적용").font(Typography.caption).foregroundStyle(Palette.accentGreen)
+                    Image(systemName: "person.crop.circle")
+                        .font(.system(size: 18, weight: .regular))
+                        .foregroundStyle(Palette.muted)
+                    Text(authVM.currentUserEmail ?? "로그인 정보를 불러오지 못했습니다")
+                        .font(Typography.body)
+                        .foregroundStyle(authVM.currentUserEmail == nil ? Palette.muted : Palette.body)
+                        .lineLimit(1)
+                        .textSelection(.enabled)
+                    Spacer(minLength: Spacing.md)
+                    Button(role: .destructive) {
+                        Task { await authVM.signOut() }
+                    } label: {
+                        Label("로그아웃", systemImage: "rectangle.portrait.and.arrow.right")
+                            .font(Typography.caption)
+                            .foregroundStyle(Palette.accentRed)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(authVM.isLoading)
+                }
+                if let error = authVM.errorMessage {
+                    Text(error)
+                        .font(Typography.caption)
+                        .foregroundStyle(Palette.accentRed)
+                }
+            }
+            .padding(Spacing.lg)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Palette.surfaceCard).clipShape(RoundedRectangle(cornerRadius: Radius.card))
+            .overlay(RoundedRectangle(cornerRadius: Radius.card).stroke(Palette.hairline))
+
+            VStack(alignment: .leading, spacing: Spacing.sm) {
+                Text("유저 페이지 열기 방식").font(Typography.caption).foregroundStyle(Palette.muted)
+                Picker("열기 방식", selection: $userDetailOpenMode) {
+                    ForEach(UserDetailOpenMode.allCases) { mode in
+                        Text(mode.title).tag(mode.rawValue)
                     }
                 }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(width: 260)
             }
             .padding(Spacing.lg)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -35,34 +63,14 @@ struct SettingsView: View {
                 Text("정보").font(Typography.caption).foregroundStyle(Palette.muted)
                 Text("Connectum \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "")")
                     .font(Typography.body).foregroundStyle(Palette.body)
-                Text(SupabaseClientProvider.configFileURL().path)
-                    .font(Typography.caption).foregroundStyle(Palette.muted).textSelection(.enabled)
             }
             Spacer()
         }
         .padding(Spacing.xl)
-        .frame(width: 480, height: 380)
+        .frame(width: 520, height: 420)
         .background(Palette.canvas)
-        .onAppear(perform: load)
-    }
-
-    private func field(_ ph: String, _ text: Binding<String>) -> some View {
-        TextField(ph, text: text)
-            .textFieldStyle(.plain).foregroundStyle(Palette.ink).padding(Spacing.sm)
-            .background(Palette.surfaceElevated).clipShape(RoundedRectangle(cornerRadius: Radius.button))
-    }
-
-    private func load() {
-        let (u, a) = SupabaseClientProvider.resolve()
-        url = u; anon = a
-    }
-
-    private func save() {
-        let fileURL = SupabaseClientProvider.configFileURL()
-        try? FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        if let data = try? JSONSerialization.data(withJSONObject: ["supabaseUrl": url, "supabaseAnonKey": anon]) {
-            try? data.write(to: fileURL)
-            saved = true
+        .onAppear {
+            Task { await authVM.loadCurrentUserEmail() }
         }
     }
 }

@@ -2,12 +2,23 @@ import SwiftUI
 
 @main
 struct ConnectumApp: App {
+    @State private var shell = ShellModel()
+
     var body: some Scene {
         WindowGroup {
-            RootView()
-                .preferredColorScheme(.dark)   // Raycast is dark-only; force it so native
-                .tint(.white)                  // controls + default text never render light (black)
+            GeometryReader { proxy in
+                RootView(shell: shell)
+                    .frame(
+                        width: max(1, proxy.size.width / shell.uiScale),
+                        height: max(1, proxy.size.height / shell.uiScale),
+                        alignment: .topLeading
+                    )
+                    .scaleEffect(shell.uiScale, anchor: .topLeading)
+            }
+            .preferredColorScheme(shell.theme.colorScheme)
+            .tint(shell.theme.tint)
         }
+        .commands { ConnectumCommands(shell: shell) }
         .windowStyle(.hiddenTitleBar)
         .windowResizability(.contentMinSize)
         .defaultSize(width: 1280, height: 820)
@@ -15,8 +26,8 @@ struct ConnectumApp: App {
         // Connectum settings — opens with Cmd+,
         Settings {
             SettingsView()
-                .preferredColorScheme(.dark)
-                .tint(.white)
+                .preferredColorScheme(shell.theme.colorScheme)
+                .tint(shell.theme.tint)
         }
     }
 }

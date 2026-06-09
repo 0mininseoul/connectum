@@ -1,14 +1,17 @@
 import { corsHeaders } from "../_shared/cors.ts";
 import { adminClient } from "../_shared/admin.ts";
-import { getSecret } from "../_shared/vault.ts";
+import { tokenForSupabaseAccount } from "../_shared/supabase_token.ts";
 import { mgmtPost } from "../_shared/mgmt.ts";
 import { buildSelectSQL } from "../_shared/sql.ts";
-import { rowToCrmUser, rowToMirroredRow, maxCursor } from "./map.ts";
+import { requireInternalRequest } from "../_shared/internal_auth.ts";
+import { filterExcludedCrmUsers, rowToCrmUser, rowToMirroredRow, maxCursor } from "./map.ts";
 
 const PAGE = 500;
 
 async function handle(req: Request): Promise<Response> {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+  const unauthorized = requireInternalRequest(req);
+  if (unauthorized) return unauthorized;
   const db = adminClient();
   const { service_id } = await req.json().catch(() => ({ service_id: undefined }));
   const { data: run } = await db.from("sync_run")
@@ -18,10 +21,17 @@ async function handle(req: Request): Promise<Response> {
     const { data: svc, error: svcErr } = await db.from("service")
       .select("id, supabase_account_id, supabase_project_ref").eq("id", service_id).single();
     if (svcErr) throw svcErr;
-    const { data: acct } = await db.from("supabase_account")
-      .select("access_token_ref").eq("id", svc.supabase_account_id).single();
-    const token = await getSecret(acct!.access_token_ref);
+    if (!svc.supabase_account_id) {
+      throw new Error("Supabase account is not connected for this service");
+    }
+    const token = await tokenForSupabaseAccount(svc.supabase_account_id);
     const { data: tables } = await db.from("service_table").select("*").eq("service_id", service_id);
+    const { data: excludedUsers, error: excludedErr } = await db.from("crm_user")
+      .select("source_user_id")
+      .eq("service_id", service_id)
+      .eq("contact_status", "excluded");
+    if (excludedErr) throw excludedErr;
+    const excludedSourceUserIds = new Set((excludedUsers ?? []).map((u) => String(u.source_user_id)));
 
     for (const t of tables ?? []) {
       const scopeKey = `table:${t.source_schema}.${t.source_table}`;
@@ -32,10 +42,12 @@ async function handle(req: Request): Promise<Response> {
         cursorValue: cur?.cursor_value ?? undefined, limit: PAGE,
       });
       const rows = await mgmtPost<Record<string, unknown>[]>(
-        `/v1/projects/${svc.supabase_project_ref}/database/query`, token, { query: sql });
+        `/v1/projects/${svc.supabase_project_ref}/database/query/read-only`, token, { query: sql });
 
       if (t.role === "user_table") {
-        const ups = rows.map((r) => rowToCrmUser(r, t.column_map ?? {}, service_id));
+        const mapped = rows.map((r) => rowToCrmUser(r, t.column_map ?? {}, service_id));
+        const ups = filterExcludedCrmUsers(mapped, excludedSourceUserIds);
+        stats[`${scopeKey}:excluded`] = (stats[`${scopeKey}:excluded`] ?? 0) + (mapped.length - ups.length);
         if (ups.length) {
           const { error } = await db.from("crm_user").upsert(ups, { onConflict: "service_id,source_user_id" });
           if (error) throw error;

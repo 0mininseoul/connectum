@@ -1,5 +1,5 @@
 import { assertEquals } from "jsr:@std/assert";
-import { rowToCrmUser, rowToMirroredRow, maxCursor } from "./map.ts";
+import { filterExcludedCrmUsers, rowToCrmUser, rowToMirroredRow, maxCursor } from "./map.ts";
 
 Deno.test("rowToCrmUser pulls id/email per column_map and keeps full row as profile", () => {
   const out = rowToCrmUser({ id: "u1", email: "a@b.com", name: "Al", plan: "free" }, { user_id: "id", email: "email" }, "svc-1");
@@ -9,6 +9,13 @@ Deno.test("rowToCrmUser stringifies numeric ids and tolerates missing email", ()
   const out = rowToCrmUser({ id: 42 }, { user_id: "id" }, "svc-1");
   assertEquals(out.source_user_id, "42");
   assertEquals(out.email, null);
+});
+Deno.test("filterExcludedCrmUsers removes blocked source ids", () => {
+  const users = [
+    rowToCrmUser({ id: "u1", email: "a@b.com" }, { user_id: "id", email: "email" }, "svc-1"),
+    rowToCrmUser({ id: "u2", email: "b@b.com" }, { user_id: "id", email: "email" }, "svc-1"),
+  ];
+  assertEquals(filterExcludedCrmUsers(users, new Set(["u2"])), [users[0]]);
 });
 Deno.test("rowToMirroredRow uses pk column (default id)", () => {
   const out = rowToMirroredRow({ id: "r1", x: 1 }, {}, "st-1", "svc-1");

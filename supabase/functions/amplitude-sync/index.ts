@@ -43,7 +43,10 @@ async function handle(req: Request): Promise<Response> {
       const rows = await parseExportZip(bytes) as unknown as ExportRow[];
 
       const matched = new Map<string, string>();
-      const { data: users } = await db.from("crm_user").select("id, source_user_id").eq("service_id", service_id);
+      const { data: users } = await db.from("crm_user")
+        .select("id, source_user_id")
+        .eq("service_id", service_id)
+        .neq("contact_status", "excluded");
       for (const u of users ?? []) matched.set(u.source_user_id, u.id);
 
       const mapped = rows.map((r) => mapExportRow(r, matched)).filter((m): m is NonNullable<typeof m> => m !== null && m.event_uuid !== null);

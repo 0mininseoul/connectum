@@ -14,6 +14,6 @@ enum Radius {
     static let badge:  CGFloat = 4
     static let row:    CGFloat = 6
     static let button: CGFloat = 8
-    static let card:   CGFloat = 10
+    static let card:   CGFloat = 8
     static let modal:  CGFloat = 16
 }
