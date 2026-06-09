@@ -74,7 +74,8 @@ protocol CrmDataProviding: Sendable {
     func listAxiomDatasets(accountId: String) async throws -> [String]
     func listProjects(supabaseAccountId: String) async throws -> [ProjectInfo]
     func listTables(supabaseAccountId: String, projectRef: String) async throws -> [TableInfo]
-    func createService(name: String, supabaseAccountId: String, projectRef: String, projectName: String?, tables: [ServiceTableSpec], amplitudeAccountId: String?, amplitudeProjectName: String?, axiomAccountId: String?, axiomDataset: String?) async throws
+    @discardableResult
+    func createService(name: String, supabaseAccountId: String, projectRef: String, projectName: String?, tables: [ServiceTableSpec], amplitudeAccountId: String?, amplitudeProjectName: String?, axiomAccountId: String?, axiomDataset: String?) async throws -> String
     func listColumns(supabaseAccountId: String, projectRef: String, schema: String, table: String) async throws -> [ColumnInfo]
     func fetchDisplayColumns(serviceId: String) async throws -> [String]
     func updateDisplayColumns(serviceId: String, columns: [String]) async throws
@@ -83,6 +84,9 @@ protocol CrmDataProviding: Sendable {
     func disconnectClaude(id: String) async throws
     func fetchChatMessages(serviceId: String) async throws -> [ChatMessage]
     func saveChatMessage(serviceId: String, role: String, content: String) async throws
+    func fetchServiceBrief(serviceId: String) async throws -> ServiceBrief?
+    func synthesizeBrief(serviceId: String, document: String?, transcript: [[String: String]]?, currentSections: BriefSections?, userPrompt: String?) async throws -> ServiceBrief
+    func interviewStep(serviceId: String, transcript: [[String: String]], targetSections: [String]?) async throws -> InterviewStep
     func fetchLatestRelease() async throws -> AppRelease?
 }
 
@@ -439,7 +443,8 @@ struct CrmRepository: CrmDataProviding {
             throw normalizeFunctionError(error)
         }
     }
-    func createService(name: String, supabaseAccountId: String, projectRef: String, projectName: String?, tables: [ServiceTableSpec], amplitudeAccountId: String?, amplitudeProjectName: String?, axiomAccountId: String?, axiomDataset: String?) async throws {
+    @discardableResult
+    func createService(name: String, supabaseAccountId: String, projectRef: String, projectName: String?, tables: [ServiceTableSpec], amplitudeAccountId: String?, amplitudeProjectName: String?, axiomAccountId: String?, axiomDataset: String?) async throws -> String {
         struct NewService: Encodable {
             let name: String; let supabase_account_id: String; let supabase_project_ref: String
             let supabase_project_name: String?
@@ -489,6 +494,7 @@ struct CrmRepository: CrmDataProviding {
                             display_columns: t.role == "user_table" ? t.displayColumns : [])
         }
         if !rows.isEmpty { try await client.from("service_table").insert(rows).execute() }
+        return created.id
     }
 
     func listColumns(supabaseAccountId: String, projectRef: String, schema: String, table: String) async throws -> [ColumnInfo] {
@@ -548,6 +554,49 @@ struct CrmRepository: CrmDataProviding {
         try await client.from("ai_message")
             .insert(NewMsg(service_id: serviceId, role: role, content: content))
             .execute()
+    }
+    func fetchServiceBrief(serviceId: String) async throws -> ServiceBrief? {
+        struct Row: Decodable { let sections: BriefSections; let status: String }
+        let rows: [Row] = try await client.from("service_brief")
+            .select("sections,status").eq("service_id", value: serviceId).limit(1)
+            .execute().value
+        guard let r = rows.first else { return nil }
+        return ServiceBrief(sections: r.sections, status: r.status, gaps: nil)
+    }
+    func synthesizeBrief(serviceId: String, document: String?, transcript: [[String: String]]?, currentSections: BriefSections?, userPrompt: String?) async throws -> ServiceBrief {
+        struct Body: Encodable {
+            let service_id: String
+            let mode = "synthesize"
+            let document: String?
+            let transcript: [[String: String]]?
+            let current_sections: BriefSections?
+            let user_prompt: String?
+        }
+        do {
+            return try await client.functions.invoke(
+                "service-brief",
+                options: FunctionInvokeOptions(body: Body(
+                    service_id: serviceId, document: document, transcript: transcript,
+                    current_sections: currentSections, user_prompt: userPrompt)))
+        } catch {
+            throw normalizeFunctionError(error)
+        }
+    }
+    func interviewStep(serviceId: String, transcript: [[String: String]], targetSections: [String]?) async throws -> InterviewStep {
+        struct Body: Encodable {
+            let service_id: String
+            let mode = "interview_step"
+            let transcript: [[String: String]]
+            let target_sections: [String]?
+        }
+        do {
+            return try await client.functions.invoke(
+                "service-brief",
+                options: FunctionInvokeOptions(body: Body(
+                    service_id: serviceId, transcript: transcript, target_sections: targetSections)))
+        } catch {
+            throw normalizeFunctionError(error)
+        }
     }
     func fetchLatestRelease() async throws -> AppRelease? {
         let rows: [AppRelease] = try await client.from("app_release")
