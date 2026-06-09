@@ -42,15 +42,24 @@ struct AIChatStreamClient {
         }
         req.httpBody = try JSONSerialization.data(
             withJSONObject: ["service_id": serviceId, "messages": messages])
+        req.timeoutInterval = 120
 
-        let (bytes, response) = try await URLSession.shared.bytes(for: req)
-        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-            let code = (response as? HTTPURLResponse)?.statusCode ?? -1
-            throw AIChatStreamError.server("status \(code)")
+        // The function sends the final answer as a single SSE event, so we don't
+        // need byte-streaming; data(for:) is more robust and lets us surface the
+        // body on non-2xx (URLSession.bytes streaming was unreliable here).
+        let (data, response) = try await URLSession.shared.data(for: req)
+        guard let http = response as? HTTPURLResponse else {
+            throw AIChatStreamError.server("응답 없음")
+        }
+        let text = String(data: data, encoding: .utf8) ?? ""
+        guard http.statusCode == 200 else {
+            throw AIChatStreamError.server("HTTP \(http.statusCode): \(text.prefix(300))")
         }
 
         var parser = SSELineParser()
-        for try await line in bytes.lines {
+        var lines = text.components(separatedBy: "\n")
+        lines.append("")  // ensure the final event flushes
+        for line in lines {
             guard let ev = parser.consume(line: line) else { continue }
             let json = (try? JSONSerialization.jsonObject(with: Data(ev.data.utf8))) as? [String: Any] ?? [:]
             switch ev.event {

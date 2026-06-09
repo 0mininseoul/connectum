@@ -110,7 +110,8 @@ final class ConnectionsViewModel {
         isBusy = true; defer { isBusy = false }
         do {
             try await repo.connectClaude(
-                code: code, codeVerifier: pkce.verifier, redirectURI: ClaudeOAuthFlow.manualRedirectURI)
+                code: code, state: pendingClaudeState, codeVerifier: pkce.verifier,
+                redirectURI: ClaudeOAuthFlow.manualRedirectURI)
             claude = (try? await repo.fetchAIAccount()) ?? nil
             pendingClaudePKCE = nil
             pendingClaudeState = nil
@@ -235,25 +236,24 @@ final class ConnectionsViewModel {
         return message
     }
 
-    func addAmplitude(key: String, secret: String, region: String, projectName: String, accountName: String) async {
+    func addAmplitude(projectName: String, key: String, secret: String, region: String) async {
         isBusy = true; defer { isBusy = false }
         do {
             try await repo.connectAmplitude(
+                projectName: projectName,
                 apiKey: key,
                 secretKey: secret,
-                region: region.isEmpty ? "us" : region,
-                projectName: projectName,
-                accountName: accountName
+                region: region.isEmpty ? "us" : region
             )
             status = "Amplitude 연결됨"
             await load()
         } catch { status = "Amplitude 연결 실패: \(error)" }
     }
 
-    func addAxiom(token: String, accountName: String) async {
+    func addAxiom(token: String) async {
         isBusy = true; defer { isBusy = false }
         do {
-            let ds = try await repo.connectAxiom(token: token, accountName: accountName)
+            let ds = try await repo.connectAxiom(token: token)
             status = "Axiom 연결됨 (데이터셋 \(ds.count)개)"
             await load()
         } catch { status = "Axiom 연결 실패: \(error)" }
@@ -360,13 +360,11 @@ struct ConnectionsView: View {
     @State private var provider: ConnectionProvider = .supabase
     @State private var sbPat = ""
     @State private var sbLabel = ""
+    @State private var amProjectName = ""
     @State private var amKey = ""
     @State private var amSecret = ""
     @State private var amRegion = "us"
-    @State private var amProjectName = ""
-    @State private var amAccountName = ""
     @State private var axToken = ""
-    @State private var axAccountName = ""
     @State private var servicePendingDeletion: Service?
     @State private var accountPendingDeletion: ConnectedAccountDeletion?
     @State private var deleteConfirmationName = ""
@@ -489,11 +487,9 @@ struct ConnectionsView: View {
                     sbLabel: $sbLabel,
                     amKey: $amKey,
                     amSecret: $amSecret,
-                    amRegion: $amRegion,
                     amProjectName: $amProjectName,
-                    amAccountName: $amAccountName,
-                    axToken: $axToken,
-                    axAccountName: $axAccountName
+                    amRegion: $amRegion,
+                    axToken: $axToken
                 )
                 .frame(width: 480, alignment: .top)
                 .frame(maxWidth: .infinity, alignment: .center)
@@ -553,11 +549,9 @@ struct ConnectionsView: View {
                             sbLabel: $sbLabel,
                             amKey: $amKey,
                             amSecret: $amSecret,
-                            amRegion: $amRegion,
                             amProjectName: $amProjectName,
-                            amAccountName: $amAccountName,
-                            axToken: $axToken,
-                            axAccountName: $axAccountName
+                            amRegion: $amRegion,
+                            axToken: $axToken
                         )
                     }
                     ServiceDangerZone(service: service, isBusy: vm.isBusy) {
@@ -866,7 +860,7 @@ private struct ConnectedAccountsPanel: View {
                             .font(Typography.caption)
                             .foregroundStyle(Palette.ink)
                             .lineLimit(1)
-                        Text(accountDisplayName(account))
+                        Text(accountDisplayName(provider: provider, account: account))
                             .font(.system(size: 11))
                             .foregroundStyle(Palette.muted)
                             .lineLimit(1)
@@ -950,7 +944,7 @@ private struct ConnectedAccountsPanel: View {
         case .amplitude:
             if let serviceProject = vm.clean(selectedService.amplitudeProjectName) { return serviceProject }
             if let accountProject = vm.clean(account.projectName) { return accountProject }
-            return "프로젝트 이름 미지정"
+            return "프로젝트 이름 미확인"
         case .axiom:
             if let dataset = vm.clean(selectedService.axiomDataset) { return dataset }
             if let datasets = vm.axiomDatasetsByAccountId[account.id], datasets.count == 1 {
@@ -968,21 +962,24 @@ private struct ConnectedAccountsPanel: View {
         case .supabase:
             return "프로젝트 선택 전"
         case .amplitude:
-            return vm.clean(account.projectName) ?? "프로젝트 이름 미지정"
+            return vm.clean(account.projectName) ?? "프로젝트 이름 미확인"
         case .axiom:
             if let datasets = account.datasets, datasets.count == 1 { return datasets[0] }
             return "데이터셋 미지정"
         }
     }
 
-    private func accountDisplayName(_ account: ConnAccount) -> String {
+    private func accountDisplayName(provider: ConnectionProvider, account: ConnAccount) -> String {
+        if provider == .amplitude {
+            return "Export API"
+        }
         if let resolved = vm.supabaseAccountNamesById[account.id], !resolved.isEmpty {
             return resolved
         }
         if let name = vm.cleanAccountName(account) {
             return name
         }
-        return "계정 이름 미지정"
+        return "계정 이름 미확인"
     }
 }
 
@@ -1101,11 +1098,9 @@ private struct AccountConnectionPanel: View {
     @Binding var sbLabel: String
     @Binding var amKey: String
     @Binding var amSecret: String
-    @Binding var amRegion: String
     @Binding var amProjectName: String
-    @Binding var amAccountName: String
+    @Binding var amRegion: String
     @Binding var axToken: String
-    @Binding var axAccountName: String
     @State private var showManualSupabase = false
 
     var body: some View {
@@ -1145,7 +1140,7 @@ private struct AccountConnectionPanel: View {
                         .clipShape(RoundedRectangle(cornerRadius: Radius.button))
                 }
                 .buttonStyle(.plain)
-                .disabled(vm.isBusy)
+                .disabled(vm.isBusy || !canSubmit)
             }
         }
         .padding(Spacing.lg)
@@ -1196,17 +1191,26 @@ private struct AccountConnectionPanel: View {
             .font(Typography.caption)
             .foregroundStyle(Palette.muted)
         case .amplitude:
+            Text("Export API 자격증명으로 이벤트 연결을 검증합니다. Amplitude API가 프로젝트 이름을 제공하지 않으므로 프로젝트 이름만 직접 입력합니다.")
+                .font(Typography.caption)
+                .foregroundStyle(Palette.muted)
+                .fixedSize(horizontal: false, vertical: true)
+            connectionField("프로젝트 이름", text: $amProjectName)
             connectionField("API Key", text: $amKey)
             connectionField("Secret Key", text: $amSecret, secure: true)
-            HStack(spacing: Spacing.sm) {
-                connectionField("리전", text: $amRegion)
-                    .frame(width: 78)
-                connectionField("프로젝트 이름", text: $amProjectName)
+            Picker("리전", selection: $amRegion) {
+                Text("US").tag("us")
+                Text("EU").tag("eu")
             }
-            connectionField("계정 이름 또는 이메일", text: $amAccountName)
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(width: 140)
         case .axiom:
-            connectionField("API Token", text: $axToken, secure: true)
-            connectionField("계정 이름 또는 이메일", text: $axAccountName)
+            Text("Axiom API Token 또는 PAT로 데이터셋을 불러옵니다. 사용자/조직 정보 권한이 있으면 계정명도 자동으로 표시합니다.")
+                .font(Typography.caption)
+                .foregroundStyle(Palette.muted)
+                .fixedSize(horizontal: false, vertical: true)
+            connectionField("API Token 또는 PAT", text: $axToken, secure: true)
         }
     }
 
@@ -1234,11 +1238,24 @@ private struct AccountConnectionPanel: View {
             await vm.addSupabase(pat: sbPat, label: sbLabel)
             sbPat = ""; sbLabel = ""
         case .amplitude:
-            await vm.addAmplitude(key: amKey, secret: amSecret, region: amRegion, projectName: amProjectName, accountName: amAccountName)
-            amKey = ""; amSecret = ""; amProjectName = ""; amAccountName = ""
+            await vm.addAmplitude(projectName: amProjectName, key: amKey, secret: amSecret, region: amRegion)
+            amProjectName = ""; amKey = ""; amSecret = ""
         case .axiom:
-            await vm.addAxiom(token: axToken, accountName: axAccountName)
-            axToken = ""; axAccountName = ""
+            await vm.addAxiom(token: axToken)
+            axToken = ""
+        }
+    }
+
+    private var canSubmit: Bool {
+        switch provider {
+        case .supabase:
+            return !sbPat.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        case .amplitude:
+            return !amProjectName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                && !amKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                && !amSecret.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        case .axiom:
+            return !axToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
     }
 }

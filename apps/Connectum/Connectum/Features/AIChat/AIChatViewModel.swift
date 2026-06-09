@@ -62,6 +62,9 @@ final class AIChatViewModel {
         }
         assistant.isStreaming = false
         if idx < messages.count { messages[idx] = assistant }
+        if assistant.text.isEmpty && errorText == nil {
+            errorText = "응답이 비어 있습니다. (스트림은 끝났지만 텍스트가 없음)"
+        }
     }
 
     private func statusLabel(_ tool: String) -> String {

@@ -58,16 +58,24 @@ struct AIChatView: View {
         }
     }
 
+    @ViewBuilder
     private func bubble(_ m: ChatMessage) -> some View {
         HStack {
             if m.role == .user { Spacer(minLength: 32) }
-            Text(m.text.isEmpty && m.isStreaming ? "…" : m.text)
-                .font(Typography.body)
-                .foregroundStyle(m.role == .user ? Palette.ctaText : Palette.ink)
-                .padding(.horizontal, Spacing.md).padding(.vertical, Spacing.sm)
-                .background(m.role == .user ? Palette.ctaFill : Palette.surfaceCard)
-                .clipShape(RoundedRectangle(cornerRadius: Radius.card))
-                .textSelection(.enabled)
+            if m.role == .assistant && m.isStreaming && m.text.isEmpty {
+                TypingIndicator()
+                    .padding(.horizontal, Spacing.md).padding(.vertical, Spacing.sm + 2)
+                    .background(Palette.surfaceCard)
+                    .clipShape(RoundedRectangle(cornerRadius: Radius.card))
+            } else {
+                Text(m.text)
+                    .font(Typography.body)
+                    .foregroundStyle(m.role == .user ? Palette.ctaText : Palette.ink)
+                    .padding(.horizontal, Spacing.md).padding(.vertical, Spacing.sm)
+                    .background(m.role == .user ? Palette.ctaFill : Palette.surfaceCard)
+                    .clipShape(RoundedRectangle(cornerRadius: Radius.card))
+                    .textSelection(.enabled)
+            }
             if m.role == .assistant { Spacer(minLength: 32) }
         }
     }
@@ -116,7 +124,36 @@ struct AIChatView: View {
             Text("연동 탭에서 Claude(AI)를 연결하면 데이터에 대해 대화할 수 있어요.")
                 .font(Typography.caption).foregroundStyle(Palette.muted)
                 .multilineTextAlignment(.center)
+            Button { Task { await vm.refreshConnection() } } label: {
+                Label("다시 확인", systemImage: "arrow.clockwise")
+                    .font(Typography.caption).foregroundStyle(Palette.accentBlue)
+            }
+            .buttonStyle(.plain)
         }
         .padding(Spacing.xl).frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+// Animated "generating" dots shown in the assistant bubble while awaiting a reply.
+private struct TypingIndicator: View {
+    var body: some View {
+        TimelineView(.animation) { context in
+            let t = context.date.timeIntervalSinceReferenceDate
+            HStack(spacing: 5) {
+                ForEach(0..<3, id: \.self) { i in
+                    Circle()
+                        .fill(Palette.muted)
+                        .frame(width: 6, height: 6)
+                        .opacity(opacity(t, i))
+                        .scaleEffect(0.85 + 0.3 * opacity(t, i))
+                }
+            }
+        }
+        .frame(height: 10)
+    }
+
+    private func opacity(_ t: Double, _ i: Int) -> Double {
+        let v = sin(t * 3.0 - Double(i) * 0.7)
+        return 0.3 + 0.7 * ((v + 1) / 2)
     }
 }

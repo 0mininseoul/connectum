@@ -1,7 +1,7 @@
 import { adminClient } from "./admin.ts";
 import { getSecret, setSecret } from "./vault.ts";
 import { claudeEnv } from "./claude_env.ts";
-import { buildRefreshBody, needsRefresh, parseTokenResponse } from "./claude_oauth.ts";
+import { buildRefreshBody, needsRefresh, parseTokenResponse, TOKEN_CONTENT_TYPE } from "./claude_oauth.ts";
 
 type Row = {
   id: string;
@@ -29,7 +29,7 @@ export async function tokenForClaudeAccount(): Promise<string> {
   const refresh = await getSecret(row.refresh_token_ref);
   const res = await fetch(claudeEnv.tokenUrl(), {
     method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    headers: { "Content-Type": TOKEN_CONTENT_TYPE },
     body: buildRefreshBody({ refreshToken: refresh, clientId: claudeEnv.clientId() }),
   });
   if (!res.ok) throw new Error(`claude_refresh_failed:${res.status}:${await res.text()}`);

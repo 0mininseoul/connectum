@@ -24,26 +24,28 @@ Deno.test("authorize url has pkce + scope + redirect", () => {
   assertEquals(u.searchParams.get("redirect_uri"), "http://127.0.0.1:53682/callback");
 });
 
-Deno.test("code exchange body carries verifier, no secret", () => {
+Deno.test("code exchange body is JSON, carries verifier + state, no secret", () => {
   const b = buildCodeExchangeBody({
     code: "c",
+    state: "st",
     codeVerifier: "v",
     clientId: "cid",
     redirectUri: "http://127.0.0.1:53682/callback",
   });
-  const p = new URLSearchParams(b);
-  assertEquals(p.get("grant_type"), "authorization_code");
-  assertEquals(p.get("code"), "c");
-  assertEquals(p.get("code_verifier"), "v");
-  assertEquals(p.get("client_id"), "cid");
+  const p = JSON.parse(b);
+  assertEquals(p.grant_type, "authorization_code");
+  assertEquals(p.code, "c");
+  assertEquals(p.state, "st");
+  assertEquals(p.code_verifier, "v");
+  assertEquals(p.client_id, "cid");
   assert(!b.includes("client_secret"));
 });
 
-Deno.test("refresh body uses refresh grant", () => {
-  const p = new URLSearchParams(buildRefreshBody({ refreshToken: "r", clientId: "cid" }));
-  assertEquals(p.get("grant_type"), "refresh_token");
-  assertEquals(p.get("refresh_token"), "r");
-  assertEquals(p.get("client_id"), "cid");
+Deno.test("refresh body is JSON with refresh grant", () => {
+  const p = JSON.parse(buildRefreshBody({ refreshToken: "r", clientId: "cid" }));
+  assertEquals(p.grant_type, "refresh_token");
+  assertEquals(p.refresh_token, "r");
+  assertEquals(p.client_id, "cid");
 });
 
 Deno.test("parse token response computes expiry", () => {

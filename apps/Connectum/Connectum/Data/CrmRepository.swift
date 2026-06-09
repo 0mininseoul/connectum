@@ -55,8 +55,8 @@ protocol CrmDataProviding: Sendable {
     func supabaseOAuthAuthorizeURL(state: String) async throws -> URL
     func connectSupabaseOAuth(code: String, state: String) async throws
     func connectSupabasePAT(pat: String, label: String) async throws
-    func connectAmplitude(apiKey: String, secretKey: String, region: String, projectName: String, accountName: String) async throws
-    func connectAxiom(token: String, accountName: String) async throws -> [String]
+    func connectAmplitude(projectName: String, apiKey: String, secretKey: String, region: String) async throws
+    func connectAxiom(token: String) async throws -> [String]
     func deleteSupabaseAccount(id: String) async throws
     func deleteAmplitudeAccount(id: String) async throws
     func deleteAxiomAccount(id: String) async throws
@@ -70,7 +70,7 @@ protocol CrmDataProviding: Sendable {
     func fetchDisplayColumns(serviceId: String) async throws -> [String]
     func updateDisplayColumns(serviceId: String, columns: [String]) async throws
     func fetchAIAccount() async throws -> AIAccount?
-    func connectClaude(code: String, codeVerifier: String, redirectURI: String) async throws
+    func connectClaude(code: String, state: String?, codeVerifier: String, redirectURI: String) async throws
     func disconnectClaude(id: String) async throws
 }
 
@@ -298,42 +298,30 @@ struct CrmRepository: CrmDataProviding {
         struct R: Decodable { let account_id: String? }
         let _: R = try await client.functions.invoke("supabase-connect-pat", options: FunctionInvokeOptions(body: B(pat: pat, label: label)))
     }
-    func connectAmplitude(apiKey: String, secretKey: String, region: String, projectName: String, accountName: String) async throws {
+    func connectAmplitude(projectName: String, apiKey: String, secretKey: String, region: String) async throws {
         struct B: Encodable {
+            let project_name: String
             let api_key: String
             let secret_key: String
             let region: String
-            let project_name: String?
-            let account_name: String?
-            let label: String
         }
         struct R: Decodable { let account_id: String? }
-        let cleanProject = projectName.trimmingCharacters(in: .whitespacesAndNewlines)
-        let cleanAccount = accountName.trimmingCharacters(in: .whitespacesAndNewlines)
-        let fallbackLabel = cleanAccount.isEmpty ? (cleanProject.isEmpty ? "Amplitude" : cleanProject) : cleanAccount
         let _: R = try await client.functions.invoke(
             "amplitude-connect",
             options: FunctionInvokeOptions(body: B(
+                project_name: projectName,
                 api_key: apiKey,
                 secret_key: secretKey,
-                region: region,
-                project_name: cleanProject.isEmpty ? nil : cleanProject,
-                account_name: cleanAccount.isEmpty ? nil : cleanAccount,
-                label: fallbackLabel
+                region: region
             ))
         )
     }
-    func connectAxiom(token: String, accountName: String) async throws -> [String] {
-        struct B: Encodable { let token: String; let account_name: String?; let label: String }
+    func connectAxiom(token: String) async throws -> [String] {
+        struct B: Encodable { let token: String }
         struct R: Decodable { let account_id: String?; let datasets: [String]? }
-        let cleanAccount = accountName.trimmingCharacters(in: .whitespacesAndNewlines)
         let r: R = try await client.functions.invoke(
             "axiom-connect",
-            options: FunctionInvokeOptions(body: B(
-                token: token,
-                account_name: cleanAccount.isEmpty ? nil : cleanAccount,
-                label: cleanAccount.isEmpty ? "Axiom" : cleanAccount
-            ))
+            options: FunctionInvokeOptions(body: B(token: token))
         )
         return r.datasets ?? []
     }
@@ -471,12 +459,12 @@ struct CrmRepository: CrmDataProviding {
             .select("id,label,account_name").order("created_at").limit(1).execute().value
         return rows.first
     }
-    func connectClaude(code: String, codeVerifier: String, redirectURI: String) async throws {
-        struct B: Encodable { let code: String; let code_verifier: String; let redirect_uri: String }
+    func connectClaude(code: String, state: String?, codeVerifier: String, redirectURI: String) async throws {
+        struct B: Encodable { let code: String; let state: String?; let code_verifier: String; let redirect_uri: String }
         struct R: Decodable { let account_id: String? }
         let _: R = try await client.functions.invoke(
             "ai-connect",
-            options: FunctionInvokeOptions(body: B(code: code, code_verifier: codeVerifier, redirect_uri: redirectURI)))
+            options: FunctionInvokeOptions(body: B(code: code, state: state, code_verifier: codeVerifier, redirect_uri: redirectURI)))
     }
     func disconnectClaude(id: String) async throws {
         try await client.from("ai_account").delete().eq("id", value: id).execute()

@@ -25,19 +25,23 @@ export function buildAuthorizeUrl(i: AuthorizeInput): URL {
 
 export interface CodeExchangeInput {
   code: string;
+  state?: string;
   codeVerifier: string;
   clientId: string;
   redirectUri: string;
 }
 
+// Claude's token endpoint expects a JSON body (not form-urlencoded) and the state.
 export function buildCodeExchangeBody(i: CodeExchangeInput): string {
-  return new URLSearchParams({
+  const body: Record<string, string> = {
     grant_type: "authorization_code",
     code: i.code,
     redirect_uri: i.redirectUri,
     client_id: i.clientId,
     code_verifier: i.codeVerifier,
-  }).toString();
+  };
+  if (i.state) body.state = i.state;
+  return JSON.stringify(body);
 }
 
 export interface RefreshInput {
@@ -46,12 +50,14 @@ export interface RefreshInput {
 }
 
 export function buildRefreshBody(i: RefreshInput): string {
-  return new URLSearchParams({
+  return JSON.stringify({
     grant_type: "refresh_token",
     refresh_token: i.refreshToken,
     client_id: i.clientId,
-  }).toString();
+  });
 }
+
+export const TOKEN_CONTENT_TYPE = "application/json";
 
 export interface ParsedToken {
   accessToken: string;
