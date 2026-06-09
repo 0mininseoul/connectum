@@ -53,6 +53,7 @@ final class ConnectionsViewModel {
     var axiom: [ConnAccount] = []
     var claude: AIAccount?
     var status: String?
+    var didLoad = false
     var isBusy = false
     var supabaseProjectNamesByRef: [String: String] = [:]
     var supabaseAccountNamesById: [String: String] = [:]
@@ -67,6 +68,7 @@ final class ConnectionsViewModel {
             axiom = try await repo.fetchAxiomAccounts()
         } catch { status = "불러오기 실패: \(error)" }
         claude = (try? await repo.fetchAIAccount()) ?? nil
+        didLoad = true
     }
 
     // Claude's public client rejects loopback redirects, so we use the manual
@@ -513,7 +515,12 @@ struct ConnectionsView: View {
 
     @ViewBuilder
     private func realServiceContent(_ service: Service) -> some View {
-        if requiresSupabaseRepair(service) {
+        if !vm.didLoad {
+            // Avoid flashing the repair panel before accounts have loaded.
+            ProgressView()
+                .controlSize(.small)
+                .frame(maxWidth: .infinity, minHeight: 200, alignment: .center)
+        } else if requiresSupabaseRepair(service) {
             VStack(alignment: .leading, spacing: Spacing.lg) {
                 SupabaseRepairPanel(service: service, isBusy: vm.isBusy) {
                     Task {

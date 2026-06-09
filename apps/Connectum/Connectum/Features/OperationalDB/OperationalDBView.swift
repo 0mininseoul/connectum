@@ -132,6 +132,11 @@ struct OperationalDBView: View {
         }
         .onChange(of: selection) { _, id in
             if id != nil, !searchFocused { tableFocused = true }
+            // Keep an open detail (side/popup) in sync with arrow-key navigation.
+            if let id, let user = vm.filteredUsers.first(where: { $0.id == id }) {
+                if sideUser != nil { sideUser = user }
+                if sheetUser != nil { sheetUser = user }
+            }
         }
         .onChange(of: detailOpenModeRaw) { _, _ in
             if detailOpenMode == .popup { sideUser = nil }

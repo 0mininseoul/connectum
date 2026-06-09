@@ -269,6 +269,17 @@ struct ServiceTableSpec: Hashable {
     var displayColumns: [String] = []   // columns to show in the operational-DB table
 }
 
+// Latest distributable build advertised to the app for the update check.
+struct AppRelease: Codable, Hashable {
+    let version: String
+    let dmgUrl: String
+    let notes: String?
+    enum CodingKeys: String, CodingKey {
+        case version, notes
+        case dmgUrl = "dmg_url"
+    }
+}
+
 // Workspace-global Claude (AI) account. Metadata only; tokens live in Vault.
 struct AIAccount: Codable, Identifiable, Hashable {
     let id: String

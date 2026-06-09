@@ -20,7 +20,12 @@ struct AIChatView: View {
         .background(Palette.canvas)
         .task {
             await vm.bind(serviceId: serviceId)
-            inputFocused = true
+        }
+        .task {
+            // Focus the input as soon as the panel mounts (decoupled from the
+            // network bind) so typing right after Cmd+I goes straight in.
+            try? await Task.sleep(for: .milliseconds(150))
+            if vm.connected { inputFocused = true }
         }
         .onChange(of: serviceId) { _, new in Task { await vm.bind(serviceId: new) } }
     }

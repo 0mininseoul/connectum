@@ -74,6 +74,7 @@ protocol CrmDataProviding: Sendable {
     func disconnectClaude(id: String) async throws
     func fetchChatMessages(serviceId: String) async throws -> [ChatMessage]
     func saveChatMessage(serviceId: String, role: String, content: String) async throws
+    func fetchLatestRelease() async throws -> AppRelease?
 }
 
 struct CrmRepository: CrmDataProviding {
@@ -486,5 +487,13 @@ struct CrmRepository: CrmDataProviding {
         try await client.from("ai_message")
             .insert(NewMsg(service_id: serviceId, role: role, content: content))
             .execute()
+    }
+    func fetchLatestRelease() async throws -> AppRelease? {
+        let rows: [AppRelease] = try await client.from("app_release")
+            .select("version,dmg_url,notes")
+            .order("created_at", ascending: false)
+            .limit(1)
+            .execute().value
+        return rows.first
     }
 }

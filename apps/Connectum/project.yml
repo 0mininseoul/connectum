@@ -17,6 +17,8 @@ targets:
       path: Connectum/Info.plist
       properties:
         CFBundleDisplayName: Connectum
+        CFBundleShortVersionString: "1.1.0"
+        CFBundleVersion: "2"
         LSMinimumSystemVersion: "14.0"
         CFBundleLocalizations:
           - ko
