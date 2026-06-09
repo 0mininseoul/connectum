@@ -28,8 +28,11 @@ struct ClaudePKCE {
 }
 
 enum ClaudeOAuthFlow {
-    // Reuse the existing fixed-port loopback (Claude's client allow-lists a fixed
-    // redirect; a dynamic port would not match). 127.0.0.1:53682/callback.
+    // Claude's public client does NOT allow loopback redirects, so we use the
+    // out-of-band console callback: after authorizing, the page shows a code
+    // (often "code#state") the user pastes back into the app.
+    static let manualRedirectURI = "https://console.anthropic.com/oauth/code/callback"
+
     static var redirectURI: String { SupabaseOAuthFlow.redirectURI }
 
     static func authorizeURL(authorizeURL: String, clientId: String, redirectURI: String,

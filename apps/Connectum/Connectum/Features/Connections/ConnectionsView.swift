@@ -69,39 +69,54 @@ final class ConnectionsViewModel {
         claude = (try? await repo.fetchAIAccount()) ?? nil
     }
 
-    @discardableResult
-    func connectClaude() async -> Bool {
+    // Claude's public client rejects loopback redirects, so we use the manual
+    // out-of-band flow: open the authorize URL, the user pastes the displayed code.
+    private var pendingClaudePKCE: ClaudePKCE?
+    private var pendingClaudeState: String?
+
+    // Returns true if the browser opened (caller then shows the paste sheet).
+    func startClaudeConnect() -> Bool {
         let cfg = SupabaseClientProvider.claudeConfig()
         guard !cfg.clientId.isEmpty else {
             status = "Claude OAuth 클라이언트가 설정되지 않았습니다 (config.json의 claudeClientId)."
             return false
         }
-        isBusy = true; defer { isBusy = false }
-        let receiver = SupabaseOAuthLoopbackReceiver()
         let pkce = ClaudePKCE.generate()
         let state = UUID().uuidString
+        pendingClaudePKCE = pkce
+        pendingClaudeState = state
         let url = ClaudeOAuthFlow.authorizeURL(
             authorizeURL: cfg.authorizeURL, clientId: cfg.clientId,
-            redirectURI: ClaudeOAuthFlow.redirectURI, scope: cfg.scope,
+            redirectURI: ClaudeOAuthFlow.manualRedirectURI, scope: cfg.scope,
             state: state, codeChallenge: pkce.challenge)
-        let callbackTask = Task { try await receiver.waitForCallback(expectedState: state) }
         guard NSWorkspace.shared.open(url) else {
-            receiver.cancel(); callbackTask.cancel()
             status = "브라우저를 열 수 없습니다."
             return false
         }
+        return true
+    }
+
+    func finishClaudeConnect(pasted: String) async {
+        guard let pkce = pendingClaudePKCE else { return }
+        let trimmed = pasted.trimmingCharacters(in: .whitespacesAndNewlines)
+        // The console callback often returns "code#state".
+        let parts = trimmed.split(separator: "#", maxSplits: 1).map(String.init)
+        let code = parts.first ?? trimmed
+        if parts.count > 1, let expected = pendingClaudeState, parts[1] != expected {
+            status = "state 값이 일치하지 않습니다. 다시 시도하세요."
+            return
+        }
+        guard !code.isEmpty else { status = "코드가 비어 있습니다."; return }
+        isBusy = true; defer { isBusy = false }
         do {
-            let callback = try await callbackTask.value
             try await repo.connectClaude(
-                code: callback.code, codeVerifier: pkce.verifier, redirectURI: ClaudeOAuthFlow.redirectURI)
-            receiver.cancel()
+                code: code, codeVerifier: pkce.verifier, redirectURI: ClaudeOAuthFlow.manualRedirectURI)
             claude = (try? await repo.fetchAIAccount()) ?? nil
+            pendingClaudePKCE = nil
+            pendingClaudeState = nil
             status = "Claude 연결됨"
-            return true
         } catch {
-            receiver.cancel()
             status = "Claude 연결 실패: \(error.localizedDescription)"
-            return false
         }
     }
 
@@ -974,6 +989,8 @@ private struct ConnectedAccountsPanel: View {
 // Workspace-global Claude (AI) connection — powers the AI chat panel (⌘I).
 private struct ClaudeConnectCard: View {
     @Bindable var vm: ConnectionsViewModel
+    @State private var showPaste = false
+    @State private var pasteCode = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: Spacing.md) {
@@ -1013,8 +1030,10 @@ private struct ClaudeConnectCard: View {
                 .buttonStyle(.plain)
                 .disabled(vm.isBusy)
             } else {
-                Button { Task { await vm.connectClaude() } } label: {
-                    Label(vm.isBusy ? "브라우저 대기 중" : "Claude 계정 연결", systemImage: "safari")
+                Button {
+                    if vm.startClaudeConnect() { showPaste = true }
+                } label: {
+                    Label("Claude 계정 연결", systemImage: "safari")
                         .font(Typography.body)
                         .foregroundStyle(Palette.ctaText)
                         .padding(.horizontal, Spacing.lg)
@@ -1031,6 +1050,45 @@ private struct ClaudeConnectCard: View {
         .background(Palette.surfaceCard)
         .clipShape(RoundedRectangle(cornerRadius: Radius.card))
         .overlay(RoundedRectangle(cornerRadius: Radius.card).stroke(Palette.hairline))
+        .sheet(isPresented: $showPaste) { pasteSheet }
+    }
+
+    private var pasteSheet: some View {
+        VStack(alignment: .leading, spacing: Spacing.md) {
+            Text("Claude 인증 코드 붙여넣기")
+                .font(Typography.cardTitle).foregroundStyle(Palette.ink)
+            Text("브라우저에서 승인하면 화면에 코드가 표시됩니다. 그 코드를 복사해 여기에 붙여넣으세요. (형식: code 또는 code#state)")
+                .font(Typography.caption).foregroundStyle(Palette.muted)
+                .fixedSize(horizontal: false, vertical: true)
+            TextField("인증 코드", text: $pasteCode, axis: .vertical)
+                .textFieldStyle(.plain).lineLimit(2...4)
+                .padding(.horizontal, Spacing.md).padding(.vertical, Spacing.sm)
+                .background(Palette.surfaceElevated)
+                .clipShape(RoundedRectangle(cornerRadius: Radius.button))
+                .overlay(RoundedRectangle(cornerRadius: Radius.button).stroke(Palette.hairline))
+            HStack {
+                Spacer()
+                Button("취소") { showPaste = false; pasteCode = "" }
+                    .buttonStyle(.plain).foregroundStyle(Palette.muted)
+                Button {
+                    Task {
+                        await vm.finishClaudeConnect(pasted: pasteCode)
+                        if vm.claude != nil { showPaste = false; pasteCode = "" }
+                    }
+                } label: {
+                    Text(vm.isBusy ? "연결 중…" : "연결 완료")
+                        .font(Typography.body).foregroundStyle(Palette.ctaText)
+                        .padding(.horizontal, Spacing.lg).frame(height: 36)
+                        .background(Palette.ctaFill)
+                        .clipShape(RoundedRectangle(cornerRadius: Radius.button))
+                }
+                .buttonStyle(.plain)
+                .disabled(vm.isBusy || pasteCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(Spacing.xl)
+        .frame(width: 460)
+        .background(Palette.canvas)
     }
 }
 
