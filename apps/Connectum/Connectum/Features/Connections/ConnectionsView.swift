@@ -538,36 +538,52 @@ struct ConnectionsView: View {
                 .frame(maxWidth: 420, alignment: .leading)
             }
         } else {
-            HStack(alignment: .top, spacing: Spacing.lg) {
-                ConnectedAccountsPanel(selectedService: service, vm: vm) { deletion in
-                    accountPendingDeletion = deletion
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .top, spacing: Spacing.lg) {
+                    connectedAccountsPanel(service)
+                        .frame(minWidth: 420, maxWidth: 620, alignment: .topLeading)
+                    connectionActionColumn(service)
+                        .frame(minWidth: 320, maxWidth: 420, alignment: .topLeading)
+                    Spacer(minLength: 0)
                 }
-                .frame(minWidth: 440, maxWidth: 620, alignment: .topLeading)
 
-                VStack(spacing: Spacing.md) {
-                    let optionalProviders = availableOptionalProviders(for: service)
-                    if !optionalProviders.isEmpty {
-                        AccountConnectionPanel(
-                            vm: vm,
-                            provider: $provider,
-                            availableProviders: optionalProviders,
-                            title: "선택 연동 추가",
-                            sbPat: $sbPat,
-                            sbLabel: $sbLabel,
-                            amKey: $amKey,
-                            amSecret: $amSecret,
-                            amProjectName: $amProjectName,
-                            amRegion: $amRegion,
-                            axToken: $axToken
-                        )
-                    }
-                    ServiceDangerZone(service: service, isBusy: vm.isBusy) {
-                        deleteConfirmationName = ""
-                        servicePendingDeletion = service
-                    }
+                VStack(alignment: .leading, spacing: Spacing.lg) {
+                    connectedAccountsPanel(service)
+                        .frame(maxWidth: 620, alignment: .topLeading)
+                    connectionActionColumn(service)
+                        .frame(maxWidth: 420, alignment: .topLeading)
                 }
-                .frame(width: 380, alignment: .top)
-                Spacer(minLength: 0)
+            }
+        }
+    }
+
+    private func connectedAccountsPanel(_ service: Service) -> some View {
+        ConnectedAccountsPanel(selectedService: service, vm: vm) { deletion in
+            accountPendingDeletion = deletion
+        }
+    }
+
+    private func connectionActionColumn(_ service: Service) -> some View {
+        VStack(spacing: Spacing.md) {
+            let optionalProviders = availableOptionalProviders(for: service)
+            if !optionalProviders.isEmpty {
+                AccountConnectionPanel(
+                    vm: vm,
+                    provider: $provider,
+                    availableProviders: optionalProviders,
+                    title: "선택 연동 추가",
+                    sbPat: $sbPat,
+                    sbLabel: $sbLabel,
+                    amKey: $amKey,
+                    amSecret: $amSecret,
+                    amProjectName: $amProjectName,
+                    amRegion: $amRegion,
+                    axToken: $axToken
+                )
+            }
+            ServiceDangerZone(service: service, isBusy: vm.isBusy) {
+                deleteConfirmationName = ""
+                servicePendingDeletion = service
             }
         }
     }

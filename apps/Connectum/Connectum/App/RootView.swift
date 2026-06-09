@@ -284,7 +284,6 @@ struct ShellSidebar: View {
 
     private var sidebarActionBar: some View {
         VStack(spacing: 0) {
-            Divider().overlay(Palette.hairline)
             HStack(spacing: Spacing.sm) {
                 Button { shell.startNewService() } label: {
                     Label("새 서비스", systemImage: "plus")
