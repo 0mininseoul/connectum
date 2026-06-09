@@ -47,7 +47,15 @@ protocol CrmDataProviding: Sendable {
     func fetchHistory(crmUserId: String) async throws -> [HistoryEntry]
     func addHistory(crmUserId: String, entryDate: String, memo: String, imageData: Data?, fileExt: String) async throws
     func fetchMetrics(serviceId: String) async throws -> DashboardMetrics
-    func confirmDashboardKPI(serviceId: String, title: String, prompt: String) async throws -> DashboardKPIConfirmation
+    func previewKPI(serviceId: String, title: String, prompt: String) async throws -> KPIPreview
+    func recomputeKPI(serviceId: String, spec: KPISpec) async throws -> Double
+    func fetchKPIs(serviceId: String) async throws -> [DashboardKPIDefinition]
+    func seedSystemKPIs(serviceId: String) async throws
+    func insertKPI(serviceId: String, title: String, prompt: String, spec: KPISpec, unit: String, value: Double, position: Double) async throws
+    func deleteKPIRow(id: String) async throws
+    func renameKPIRow(id: String, title: String) async throws
+    func updateKPIValue(id: String, value: Double) async throws
+    func updateKPIPosition(id: String, position: Double) async throws
     func fetchViews() async throws -> [SavedView]
     func createView(name: String, config: ViewConfig) async throws
     func fetchSupabaseAccounts() async throws -> [ConnAccount]
@@ -249,16 +257,57 @@ struct CrmRepository: CrmDataProviding {
         let recent = try await count { $0.gte("created_at", value: weekAgo) }
         return DashboardMetrics(total: total, contacted: contacted, profiled: profiled, recentSignups: recent)
     }
-    func confirmDashboardKPI(serviceId: String, title: String, prompt: String) async throws -> DashboardKPIConfirmation {
-        struct Body: Encodable {
-            let service_id: String
-            let title: String
-            let prompt: String
-        }
+    func previewKPI(serviceId: String, title: String, prompt: String) async throws -> KPIPreview {
+        struct Body: Encodable { let service_id: String; let title: String; let prompt: String }
         return try await client.functions.invoke(
-            "kpi-confirm",
-            options: FunctionInvokeOptions(body: Body(service_id: serviceId, title: title, prompt: prompt))
-        )
+            "kpi-preview",
+            options: FunctionInvokeOptions(body: Body(service_id: serviceId, title: title, prompt: prompt)))
+    }
+    func recomputeKPI(serviceId: String, spec: KPISpec) async throws -> Double {
+        struct Body: Encodable { let service_id: String; let spec: KPISpec }
+        struct R: Decodable { let value: Double }
+        let r: R = try await client.functions.invoke(
+            "kpi-preview",
+            options: FunctionInvokeOptions(body: Body(service_id: serviceId, spec: spec)))
+        return r.value
+    }
+    func fetchKPIs(serviceId: String) async throws -> [DashboardKPIDefinition] {
+        try await client.from("dashboard_kpi")
+            .select("id,kind,title,prompt,spec,unit,value,position")
+            .eq("service_id", value: serviceId)
+            .order("position", ascending: true)
+            .execute().value
+    }
+    func seedSystemKPIs(serviceId: String) async throws {
+        struct Seed: Encodable { let service_id: String; let kind: String; let title: String; let position: Double }
+        let seeds = DashboardKPIDefinition.seededSystem.map {
+            Seed(service_id: serviceId, kind: $0.kind.rawValue, title: $0.title, position: $0.position)
+        }
+        try await client.from("dashboard_kpi").insert(seeds).execute()
+    }
+    func insertKPI(serviceId: String, title: String, prompt: String, spec: KPISpec, unit: String, value: Double, position: Double) async throws {
+        struct NewKPI: Encodable {
+            let service_id: String; let kind: String; let title: String
+            let prompt: String; let spec: KPISpec; let unit: String; let value: Double; let position: Double
+        }
+        try await client.from("dashboard_kpi").insert(NewKPI(
+            service_id: serviceId, kind: "custom", title: title,
+            prompt: prompt, spec: spec, unit: unit, value: value, position: position)).execute()
+    }
+    func deleteKPIRow(id: String) async throws {
+        try await client.from("dashboard_kpi").delete().eq("id", value: id).execute()
+    }
+    func renameKPIRow(id: String, title: String) async throws {
+        struct Upd: Encodable { let title: String }
+        try await client.from("dashboard_kpi").update(Upd(title: title)).eq("id", value: id).execute()
+    }
+    func updateKPIValue(id: String, value: Double) async throws {
+        struct Upd: Encodable { let value: Double }
+        try await client.from("dashboard_kpi").update(Upd(value: value)).eq("id", value: id).execute()
+    }
+    func updateKPIPosition(id: String, position: Double) async throws {
+        struct Upd: Encodable { let position: Double }
+        try await client.from("dashboard_kpi").update(Upd(position: position)).eq("id", value: id).execute()
     }
     func fetchViews() async throws -> [SavedView] {
         try await client.from("view").select("id,name,config").order("created_at", ascending: true).execute().value

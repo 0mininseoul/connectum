@@ -3,43 +3,30 @@ import Charts
 import Observation
 import UniformTypeIdentifiers
 
-private enum CustomKPIChartStatus {
-    case generating
-    case ready
-}
-
 @MainActor
 @Observable
 final class DashboardViewModel {
     var metrics = DashboardMetrics()
     var users: [CrmUser] = []
-    var kpiState = DashboardKPIState.initial
+    var kpis: [DashboardKPIDefinition] = []
     var selectedKPIId: String?
     var isLoading = false
     var isRefreshing = false
     var cacheUpdatedAt: Date?
     var errorMessage: String?
-    private var customChartStatusById: [String: CustomKPIChartStatus] = [:]
     private let repo: CrmDataProviding
     private let cache: CrmCacheProviding
-    private let kpiStore: DashboardKPIStore
 
-    init(
-        repo: CrmDataProviding = CrmRepository(),
-        cache: CrmCacheProviding = CrmCacheStore(),
-        kpiStore: DashboardKPIStore = DashboardKPIStore()
-    ) {
+    init(repo: CrmDataProviding = CrmRepository(), cache: CrmCacheProviding = CrmCacheStore()) {
         self.repo = repo
         self.cache = cache
-        self.kpiStore = kpiStore
     }
 
     @discardableResult
     func loadCached(serviceId: String) -> Bool {
         do {
             guard let snapshot = try cache.loadDashboardMetrics(serviceId: serviceId),
-                  snapshot.serviceId == serviceId
-            else { return false }
+                  snapshot.serviceId == serviceId else { return false }
             metrics = snapshot.metrics
             cacheUpdatedAt = snapshot.cachedAt
             errorMessage = nil
@@ -50,98 +37,111 @@ final class DashboardViewModel {
         }
     }
 
-    func loadKPIState(serviceId: String) {
-        kpiState = kpiStore.load(serviceId: serviceId)
-        ensureSelection()
+    func loadKPIs(serviceId: String) async {
+        do {
+            var rows = try await repo.fetchKPIs(serviceId: serviceId)
+            if rows.isEmpty {
+                try await repo.seedSystemKPIs(serviceId: serviceId)
+                rows = try await repo.fetchKPIs(serviceId: serviceId)
+            }
+            kpis = rows
+            ensureSelection()
+        } catch {
+            errorMessage = "KPI 불러오기 실패: \(error)"
+        }
     }
 
     func refresh(serviceId: String) async {
         let hasCachedMetrics = cacheUpdatedAt != nil
         isLoading = !hasCachedMetrics
         isRefreshing = hasCachedMetrics
-        defer {
-            isLoading = false
-            isRefreshing = false
-        }
+        defer { isLoading = false; isRefreshing = false }
         do {
             let freshMetrics = try await repo.fetchMetrics(serviceId: serviceId)
             metrics = freshMetrics
             users = (try? await repo.fetchUsers(serviceId: serviceId)) ?? users
-            let snapshot = DashboardMetricsCacheSnapshot(
-                serviceId: serviceId,
-                cachedAt: Date(),
-                metrics: freshMetrics
-            )
+            let snapshot = DashboardMetricsCacheSnapshot(serviceId: serviceId, cachedAt: Date(), metrics: freshMetrics)
             try? cache.saveDashboardMetrics(snapshot)
             cacheUpdatedAt = snapshot.cachedAt
             errorMessage = nil
         } catch {
             errorMessage = hasCachedMetrics ? "최신 동기화 실패: \(error)" : String(describing: error)
         }
+        await recomputeCustomValues(serviceId: serviceId)
     }
 
-    func requestKPIConfirmation(serviceId: String, title: String, prompt: String) async throws -> DashboardKPIConfirmation {
-        try await repo.confirmDashboardKPI(serviceId: serviceId, title: title, prompt: prompt)
+    // Keep custom KPI values current against the latest data.
+    func recomputeCustomValues(serviceId: String) async {
+        for index in kpis.indices where kpis[index].kind == .custom {
+            guard let spec = kpis[index].spec,
+                  let value = try? await repo.recomputeKPI(serviceId: serviceId, spec: spec) else { continue }
+            kpis[index].value = value
+            try? await repo.updateKPIValue(id: kpis[index].id, value: value)
+        }
     }
 
-    func addCustomKPI(title: String, prompt: String, confirmation: DashboardKPIConfirmation, serviceId: String) {
-        let definition = DashboardKPIDefinition.custom(title: title, prompt: prompt, confirmation: confirmation)
-        kpiState.items.append(definition)
-        selectedKPIId = definition.id
-        customChartStatusById[definition.id] = .generating
-        persist(serviceId: serviceId)
-        scheduleChartGeneration(for: definition)
+    func previewKPI(serviceId: String, title: String, prompt: String) async throws -> KPIPreview {
+        try await repo.previewKPI(serviceId: serviceId, title: title, prompt: prompt)
     }
 
-    func deleteKPI(id: String, serviceId: String) {
-        kpiState.items.removeAll { $0.id == id }
-        customChartStatusById[id] = nil
-        ensureSelection()
-        persist(serviceId: serviceId)
+    func addCustomKPI(title: String, prompt: String, preview: KPIPreview, serviceId: String) async {
+        let position = (kpis.map(\.position).max() ?? 0) + 1
+        do {
+            try await repo.insertKPI(serviceId: serviceId, title: title, prompt: prompt,
+                                     spec: preview.spec, unit: preview.unit, value: preview.value, position: position)
+            await loadKPIs(serviceId: serviceId)
+            selectedKPIId = kpis.first(where: { $0.title == title && $0.kind == .custom })?.id ?? kpis.last?.id
+        } catch {
+            errorMessage = "KPI 추가 실패: \(error)"
+        }
     }
 
-    func renameKPI(id: String, title: String, serviceId: String) {
+    func deleteKPI(id: String, serviceId: String) async {
+        do {
+            try await repo.deleteKPIRow(id: id)
+            kpis.removeAll { $0.id == id }
+            ensureSelection()
+        } catch {
+            errorMessage = "KPI 삭제 실패: \(error)"
+        }
+    }
+
+    func renameKPI(id: String, title: String, serviceId: String) async {
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty,
-              let idx = kpiState.items.firstIndex(where: { $0.id == id })
-        else { return }
-        kpiState.items[idx].title = trimmed
-        persist(serviceId: serviceId)
+        guard !trimmed.isEmpty else { return }
+        do {
+            try await repo.renameKPIRow(id: id, title: trimmed)
+            if let i = kpis.firstIndex(where: { $0.id == id }) { kpis[i].title = trimmed }
+        } catch {
+            errorMessage = "이름 수정 실패: \(error)"
+        }
     }
 
-    func moveKPI(movingId: String, before targetId: String, serviceId: String) {
+    func moveKPI(movingId: String, before targetId: String, serviceId: String) async {
         guard movingId != targetId,
-              let from = kpiState.items.firstIndex(where: { $0.id == movingId }),
-              let target = kpiState.items.firstIndex(where: { $0.id == targetId })
-        else { return }
-        let item = kpiState.items.remove(at: from)
+              let from = kpis.firstIndex(where: { $0.id == movingId }),
+              let target = kpis.firstIndex(where: { $0.id == targetId }) else { return }
+        let item = kpis.remove(at: from)
         let insertion = target > from ? target - 1 : target
-        kpiState.items.insert(item, at: insertion)
-        persist(serviceId: serviceId)
+        kpis.insert(item, at: insertion)
+        for index in kpis.indices { kpis[index].position = Double(index) }
+        for kpi in kpis { try? await repo.updateKPIPosition(id: kpi.id, position: kpi.position) }
     }
 
-    func selectKPI(id: String) {
-        selectedKPIId = id
-    }
+    func selectKPI(id: String) { selectedKPIId = id }
 
     var selectedDefinition: DashboardKPIDefinition? {
-        if let selectedKPIId,
-           let selected = kpiState.items.first(where: { $0.id == selectedKPIId }) {
-            return selected
-        }
-        return kpiState.items.first
+        kpis.first { $0.id == selectedKPIId } ?? kpis.first
     }
 
     func valueText(for definition: DashboardKPIDefinition) -> String {
-        switch effectiveKind(for: definition) {
-        case .totalUsers:
-            return "\(metrics.total)"
-        case .contactRate:
-            return String(format: "%.0f%%", metrics.contactRate * 100)
-        case .contacted:
-            return "\(metrics.contacted)"
+        switch definition.kind {
+        case .totalUsers: return "\(metrics.total)"
+        case .contactRate: return String(format: "%.0f%%", metrics.contactRate * 100)
+        case .contacted: return "\(metrics.contacted)"
         case .custom:
-            return customChartStatusById[definition.id] == .generating ? "생성 중" : "등록됨"
+            guard let v = definition.value else { return "—" }
+            return definition.unit == "percent" ? String(format: "%.1f%%", v) : "\(Int(v.rounded()))"
         }
     }
 
@@ -150,52 +150,20 @@ final class DashboardViewModel {
     }
 
     func chartPoints(for definition: DashboardKPIDefinition) -> [DashboardKPIChartPoint] {
-        let kind = effectiveKind(for: definition)
-        guard kind != .custom else { return [] }
-        return DashboardChartBuilder.series(for: kind, metrics: metrics, users: users)
+        if definition.kind == .custom {
+            guard let spec = definition.spec else { return [] }
+            return DashboardChartBuilder.customSeries(spec: spec, users: users)
+        }
+        return DashboardChartBuilder.series(for: definition.kind, metrics: metrics, users: users)
     }
 
     func chartMessage(for definition: DashboardKPIDefinition) -> String? {
-        guard definition.kind == .custom else { return nil }
-        if customChartStatusById[definition.id] == .generating {
-            return "Gemini 확인 완료. 백그라운드에서 차트를 생성하는 중입니다."
-        }
-        if effectiveKind(for: definition) == .custom {
-            return "계산 정의가 등록됐습니다. 이 프롬프트는 백엔드 계산 엔진 연결 후 날짜별 차트가 생성됩니다."
-        }
-        return nil
-    }
-
-    private func effectiveKind(for definition: DashboardKPIDefinition) -> DashboardKPIKind {
-        guard definition.kind == .custom else { return definition.kind }
-        guard customChartStatusById[definition.id] != .generating,
-              let prompt = definition.prompt,
-              let kind = DashboardChartBuilder.matchingBuiltInKind(for: prompt)
-        else {
-            return .custom
-        }
-        return kind
-    }
-
-    private func persist(serviceId: String) {
-        kpiStore.save(kpiState, serviceId: serviceId)
+        chartPoints(for: definition).isEmpty ? "표시할 날짜별 데이터가 아직 없습니다." : nil
     }
 
     private func ensureSelection() {
-        if let selectedKPIId,
-           kpiState.items.contains(where: { $0.id == selectedKPIId }) {
-            return
-        }
-        selectedKPIId = kpiState.items.first?.id
-    }
-
-    private func scheduleChartGeneration(for definition: DashboardKPIDefinition) {
-        Task { [weak self, id = definition.id] in
-            try? await Task.sleep(nanoseconds: 900_000_000)
-            await MainActor.run {
-                self?.customChartStatusById[id] = .ready
-            }
-        }
+        if let selectedKPIId, kpis.contains(where: { $0.id == selectedKPIId }) { return }
+        selectedKPIId = kpis.first?.id
     }
 }
 
@@ -219,9 +187,7 @@ struct DashboardView: View {
                 kpiGrid
                 selectedChartPanel
                 if let error = vm.errorMessage {
-                    Text(error)
-                        .font(Typography.caption)
-                        .foregroundStyle(Palette.accentRed)
+                    Text(error).font(Typography.caption).foregroundStyle(Palette.accentRed)
                 }
             }
             .padding(Spacing.xl)
@@ -230,16 +196,15 @@ struct DashboardView: View {
         .background(Palette.canvas)
         .sheet(isPresented: $isShowingKPISheet) {
             KPICreationSheet(vm: vm, serviceId: serviceId)
-                .frame(width: 560)
+                .frame(width: 480)
         }
         .alert("KPI 이름 수정", isPresented: Binding(
-            get: { renamingKPI != nil },
-            set: { if !$0 { renamingKPI = nil } }
+            get: { renamingKPI != nil }, set: { if !$0 { renamingKPI = nil } }
         )) {
             TextField("이름", text: $renameText)
             Button("저장") {
                 if let kpi = renamingKPI, let serviceId {
-                    vm.renameKPI(id: kpi.id, title: renameText, serviceId: serviceId)
+                    Task { await vm.renameKPI(id: kpi.id, title: renameText, serviceId: serviceId) }
                 }
                 renamingKPI = nil
             }
@@ -247,7 +212,7 @@ struct DashboardView: View {
         }
         .task(id: "\(serviceId ?? ""):\(refreshID)") {
             guard let serviceId else { return }
-            vm.loadKPIState(serviceId: serviceId)
+            await vm.loadKPIs(serviceId: serviceId)
             _ = vm.loadCached(serviceId: serviceId)
             await vm.refresh(serviceId: serviceId)
         }
@@ -256,60 +221,37 @@ struct DashboardView: View {
     private var header: some View {
         HStack(spacing: Spacing.md) {
             HStack(spacing: Spacing.sm) {
-                Text("대시보드")
-                    .font(Typography.title)
-                    .foregroundStyle(Palette.ink)
+                Text("대시보드").font(Typography.title).foregroundStyle(Palette.ink)
                 if vm.isRefreshing {
                     Label("동기화 중", systemImage: "arrow.triangle.2.circlepath")
-                        .font(Typography.caption)
-                        .foregroundStyle(Palette.muted)
+                        .font(Typography.caption).foregroundStyle(Palette.muted)
                 }
             }
             Spacer()
-            Button {
-                isShowingKPISheet = true
-            } label: {
+            Button { isShowingKPISheet = true } label: {
                 Label("KPI 추가", systemImage: "plus")
-                    .font(Typography.body)
-                    .foregroundStyle(Palette.ctaText)
-                    .padding(.horizontal, Spacing.lg)
-                    .frame(height: 38)
-                    .background(Palette.ctaFill)
-                    .clipShape(RoundedRectangle(cornerRadius: Radius.button))
+                    .font(Typography.body).foregroundStyle(Palette.ctaText)
+                    .padding(.horizontal, Spacing.lg).frame(height: 38)
+                    .background(Palette.ctaFill).clipShape(RoundedRectangle(cornerRadius: Radius.button))
             }
-            .buttonStyle(.plain)
-            .disabled(serviceId == nil)
+            .buttonStyle(.plain).disabled(serviceId == nil)
         }
     }
 
     private var kpiGrid: some View {
         LazyVGrid(columns: [GridItem(.adaptive(minimum: 190), spacing: Spacing.md)], spacing: Spacing.md) {
-            ForEach(vm.kpiState.items) { definition in
+            ForEach(vm.kpis) { definition in
                 KPICardView(
                     title: definition.title,
                     value: vm.valueText(for: definition),
                     subtitle: vm.subtitle(for: definition),
                     isSelected: vm.selectedDefinition?.id == definition.id,
-                    isGenerating: definition.kind == .custom && vm.chartMessage(for: definition) != nil,
-                    onRename: {
-                        renameText = definition.title
-                        renamingKPI = definition
-                    },
-                    onDelete: {
-                        if let serviceId {
-                            vm.deleteKPI(id: definition.id, serviceId: serviceId)
-                        }
-                    }
+                    onRename: { renameText = definition.title; renamingKPI = definition },
+                    onDelete: { if let serviceId { Task { await vm.deleteKPI(id: definition.id, serviceId: serviceId) } } }
                 )
-                .onTapGesture {
-                    vm.selectKPI(id: definition.id)
-                }
-                .onDrag {
-                    NSItemProvider(object: definition.id as NSString)
-                }
-                .onDrop(of: [UTType.text], isTargeted: nil) { providers in
-                    handleDrop(providers, target: definition)
-                }
+                .onTapGesture { vm.selectKPI(id: definition.id) }
+                .onDrag { NSItemProvider(object: definition.id as NSString) }
+                .onDrop(of: [UTType.text], isTargeted: nil) { providers in handleDrop(providers, target: definition) }
             }
         }
     }
@@ -321,27 +263,19 @@ struct DashboardView: View {
                 if points.isEmpty {
                     VStack(alignment: .leading, spacing: Spacing.sm) {
                         Image(systemName: "chart.xyaxis.line")
-                            .font(.system(size: 22, weight: .medium))
-                            .foregroundStyle(Palette.muted)
+                            .font(.system(size: 22, weight: .medium)).foregroundStyle(Palette.muted)
                         Text(vm.chartMessage(for: definition) ?? "표시할 날짜별 데이터가 아직 없습니다.")
-                            .font(Typography.caption)
-                            .foregroundStyle(Palette.muted)
+                            .font(Typography.caption).foregroundStyle(Palette.muted)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     .frame(height: 140, alignment: .center)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 } else {
                     Chart(points) { point in
-                        LineMark(
-                            x: .value("날짜", point.date),
-                            y: .value("값", point.value)
-                        )
-                        .foregroundStyle(Palette.accentBlue)
-                        AreaMark(
-                            x: .value("날짜", point.date),
-                            y: .value("값", point.value)
-                        )
-                        .foregroundStyle(Palette.accentBlue.opacity(0.16))
+                        LineMark(x: .value("날짜", point.date), y: .value("값", point.value))
+                            .foregroundStyle(Palette.accentBlue)
+                        AreaMark(x: .value("날짜", point.date), y: .value("값", point.value))
+                            .foregroundStyle(Palette.accentBlue.opacity(0.16))
                     }
                     .chartXAxis { AxisMarks(values: .automatic(desiredCount: 4)) }
                     .chartYAxis { AxisMarks(values: .automatic(desiredCount: 4)) }
@@ -352,31 +286,21 @@ struct DashboardView: View {
     }
 
     private func handleDrop(_ providers: [NSItemProvider], target: DashboardKPIDefinition) -> Bool {
-        guard let serviceId,
-              let provider = providers.first
-        else { return false }
+        guard let serviceId, let provider = providers.first else { return false }
         provider.loadItem(forTypeIdentifier: UTType.text.identifier, options: nil) { item, _ in
             let movingId: String?
-            if let data = item as? Data {
-                movingId = String(data: data, encoding: .utf8)
-            } else if let string = item as? String {
-                movingId = string
-            } else {
-                movingId = nil
-            }
+            if let data = item as? Data { movingId = String(data: data, encoding: .utf8) }
+            else if let string = item as? String { movingId = string }
+            else { movingId = nil }
             guard let movingId else { return }
-            Task { @MainActor in
-                vm.moveKPI(movingId: movingId, before: target.id, serviceId: serviceId)
-            }
+            Task { @MainActor in await vm.moveKPI(movingId: movingId, before: target.id, serviceId: serviceId) }
         }
         return true
     }
 
     @ViewBuilder private func card<C: View>(title: String, @ViewBuilder _ content: () -> C) -> some View {
         VStack(alignment: .leading, spacing: Spacing.sm) {
-            Text(title)
-                .font(Typography.caption)
-                .foregroundStyle(Palette.muted)
+            Text(title).font(Typography.caption).foregroundStyle(Palette.muted)
             content()
         }
         .padding(Spacing.lg)
@@ -392,27 +316,17 @@ private struct KPICardView: View {
     let value: String
     let subtitle: String
     let isSelected: Bool
-    let isGenerating: Bool
     let onRename: () -> Void
     let onDelete: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: Spacing.sm) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(Typography.caption)
-                    .foregroundStyle(Palette.muted)
-                    .lineLimit(1)
-                Text(subtitle)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(isGenerating ? Palette.accentBlue : Palette.ash)
-                    .lineLimit(1)
+                Text(title).font(Typography.caption).foregroundStyle(Palette.muted).lineLimit(1)
+                Text(subtitle).font(.system(size: 11, weight: .medium)).foregroundStyle(Palette.ash).lineLimit(1)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            Text(value)
-                .font(.system(size: 26, weight: .semibold))
-                .foregroundStyle(Palette.ink)
-                .lineLimit(1)
+            Text(value).font(.system(size: 26, weight: .semibold)).foregroundStyle(Palette.ink).lineLimit(1)
         }
         .padding(Spacing.lg)
         .frame(maxWidth: .infinity, minHeight: 104, alignment: .leading)
@@ -430,43 +344,56 @@ private struct KPICardView: View {
     }
 }
 
+// Minimal preview-and-confirm: describe the KPI, preview the real computed value,
+// then add. One primary action (미리보기 → 추가); editing the inputs re-arms preview.
 private struct KPICreationSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Bindable var vm: DashboardViewModel
     let serviceId: String?
     @State private var title = ""
     @State private var prompt = ""
-    @State private var confirmation: DashboardKPIConfirmation?
-    @State private var isRequesting = false
+    @State private var preview: KPIPreview?
+    @State private var isBusy = false
     @State private var errorMessage: String?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Spacing.lg) {
-            Text("KPI 추가")
-                .font(Typography.cardTitle)
-                .foregroundStyle(Palette.ink)
+        VStack(alignment: .leading, spacing: Spacing.md) {
+            Text("KPI 추가").font(Typography.cardTitle).foregroundStyle(Palette.ink)
 
-            VStack(alignment: .leading, spacing: Spacing.sm) {
-                TextField("KPI 이름", text: $title)
-                    .textFieldStyle(.roundedBorder)
-                TextEditor(text: $prompt)
-                    .font(Typography.body)
-                    .frame(height: 120)
-                    .scrollContentBackground(.hidden)
-                    .background(Palette.surface)
-                    .clipShape(RoundedRectangle(cornerRadius: Radius.button))
-                    .overlay(RoundedRectangle(cornerRadius: Radius.button).stroke(Palette.hairline))
-            }
+            TextField("KPI 이름", text: $title)
+                .textFieldStyle(.roundedBorder)
+                .onChange(of: title) { _, _ in preview = nil }
 
-            if let confirmation {
-                VStack(alignment: .leading, spacing: Spacing.sm) {
-                    Label("Gemini 확인", systemImage: "sparkle")
-                        .font(Typography.body)
-                        .foregroundStyle(Palette.ink)
-                    Text(confirmation.summary)
-                        .font(Typography.caption)
-                        .foregroundStyle(Palette.body)
-                        .fixedSize(horizontal: false, vertical: true)
+            TextEditor(text: $prompt)
+                .font(Typography.body)
+                .frame(height: 84)
+                .scrollContentBackground(.hidden)
+                .background(Palette.surface)
+                .clipShape(RoundedRectangle(cornerRadius: Radius.button))
+                .overlay(RoundedRectangle(cornerRadius: Radius.button).stroke(Palette.hairline))
+                .overlay(alignment: .topLeading) {
+                    if prompt.isEmpty {
+                        Text("이 KPI를 어떻게 계산할지 설명하세요 (예: 전체 유저 대비 auth_provider가 kakao인 유저 비중)")
+                            .font(Typography.caption).foregroundStyle(Palette.ash)
+                            .padding(.horizontal, Spacing.sm).padding(.vertical, Spacing.sm)
+                            .allowsHitTesting(false)
+                    }
+                }
+                .onChange(of: prompt) { _, _ in preview = nil }
+
+            if let preview {
+                VStack(alignment: .leading, spacing: Spacing.xs) {
+                    if let interpretation = preview.interpretation, !interpretation.isEmpty {
+                        Text(interpretation).font(Typography.caption).foregroundStyle(Palette.muted)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    HStack(alignment: .firstTextBaseline, spacing: Spacing.sm) {
+                        Text(preview.valueText).font(.system(size: 22, weight: .semibold)).foregroundStyle(Palette.ink)
+                        if preview.unit == "percent" {
+                            Text("\(preview.numerator) / \(preview.denominator)명")
+                                .font(Typography.caption).foregroundStyle(Palette.muted)
+                        }
+                    }
                 }
                 .padding(Spacing.md)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -476,51 +403,27 @@ private struct KPICreationSheet: View {
             }
 
             if let errorMessage {
-                Text(errorMessage)
-                    .font(Typography.caption)
-                    .foregroundStyle(Palette.accentRed)
+                Text(errorMessage).font(Typography.caption).foregroundStyle(Palette.accentRed)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
             HStack(spacing: Spacing.sm) {
-                Button("취소") { dismiss() }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(Palette.muted)
+                Button("취소") { dismiss() }.buttonStyle(.plain).foregroundStyle(Palette.muted)
                 Spacer()
                 Button {
-                    Task { await requestConfirmation() }
+                    Task { preview == nil ? await runPreview() : await add() }
                 } label: {
-                    if isRequesting {
-                        ProgressView()
-                            .controlSize(.small)
-                            .frame(width: 120, height: 36)
-                    } else {
-                        Label("Gemini 확인 요청", systemImage: "sparkle")
-                            .frame(height: 36)
+                    Group {
+                        if isBusy { ProgressView().controlSize(.small) }
+                        else { Text(preview == nil ? "미리보기" : "추가") }
                     }
+                    .frame(minWidth: 84, minHeight: 36)
+                    .foregroundStyle(Palette.ctaText)
+                    .background(Palette.ctaFill)
+                    .clipShape(RoundedRectangle(cornerRadius: Radius.button))
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(Palette.body)
-                .padding(.horizontal, Spacing.md)
-                .background(Palette.surfaceElevated)
-                .clipShape(RoundedRectangle(cornerRadius: Radius.button))
-                .overlay(RoundedRectangle(cornerRadius: Radius.button).stroke(Palette.hairline))
-                .disabled(!canRequest || isRequesting)
-
-                Button {
-                    guard let serviceId, let confirmation else { return }
-                    vm.addCustomKPI(title: title, prompt: prompt, confirmation: confirmation, serviceId: serviceId)
-                    dismiss()
-                } label: {
-                    Text("컨펌하고 추가")
-                        .frame(height: 36)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(Palette.ctaText)
-                .padding(.horizontal, Spacing.md)
-                .background(Palette.ctaFill)
-                .clipShape(RoundedRectangle(cornerRadius: Radius.button))
-                .disabled(confirmation == nil || serviceId == nil)
+                .disabled(!canRequest || isBusy)
             }
         }
         .padding(Spacing.xl)
@@ -533,16 +436,22 @@ private struct KPICreationSheet: View {
             && !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    private func requestConfirmation() async {
+    private func runPreview() async {
         guard let serviceId else { return }
-        isRequesting = true
-        errorMessage = nil
-        confirmation = nil
-        defer { isRequesting = false }
+        isBusy = true; errorMessage = nil
+        defer { isBusy = false }
         do {
-            confirmation = try await vm.requestKPIConfirmation(serviceId: serviceId, title: title, prompt: prompt)
+            preview = try await vm.previewKPI(serviceId: serviceId, title: title, prompt: prompt)
         } catch {
-            errorMessage = "Gemini 확인 실패: \(error.localizedDescription)"
+            errorMessage = "미리보기 실패: \(error.localizedDescription)"
         }
+    }
+
+    private func add() async {
+        guard let serviceId, let preview else { return }
+        isBusy = true
+        defer { isBusy = false }
+        await vm.addCustomKPI(title: title, prompt: prompt, preview: preview, serviceId: serviceId)
+        dismiss()
     }
 }
