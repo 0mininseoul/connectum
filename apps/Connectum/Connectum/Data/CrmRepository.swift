@@ -47,6 +47,7 @@ protocol CrmDataProviding: Sendable {
     func fetchHistory(crmUserId: String) async throws -> [HistoryEntry]
     func addHistory(crmUserId: String, entryDate: String, memo: String, imageData: Data?, fileExt: String) async throws
     func fetchMetrics(serviceId: String) async throws -> DashboardMetrics
+    func confirmDashboardKPI(serviceId: String, title: String, prompt: String) async throws -> DashboardKPIConfirmation
     func fetchViews() async throws -> [SavedView]
     func createView(name: String, config: ViewConfig) async throws
     func fetchSupabaseAccounts() async throws -> [ConnAccount]
@@ -244,6 +245,17 @@ struct CrmRepository: CrmDataProviding {
         let weekAgo = ISO8601DateFormatter().string(from: Date().addingTimeInterval(-7*24*3600))
         let recent = try await count { $0.gte("created_at", value: weekAgo) }
         return DashboardMetrics(total: total, contacted: contacted, profiled: profiled, recentSignups: recent)
+    }
+    func confirmDashboardKPI(serviceId: String, title: String, prompt: String) async throws -> DashboardKPIConfirmation {
+        struct Body: Encodable {
+            let service_id: String
+            let title: String
+            let prompt: String
+        }
+        return try await client.functions.invoke(
+            "kpi-confirm",
+            options: FunctionInvokeOptions(body: Body(service_id: serviceId, title: title, prompt: prompt))
+        )
     }
     func fetchViews() async throws -> [SavedView] {
         try await client.from("view").select("id,name,config").order("created_at", ascending: true).execute().value
