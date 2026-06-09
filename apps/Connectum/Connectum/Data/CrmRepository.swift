@@ -72,6 +72,8 @@ protocol CrmDataProviding: Sendable {
     func fetchAIAccount() async throws -> AIAccount?
     func connectClaude(code: String, state: String?, codeVerifier: String, redirectURI: String) async throws
     func disconnectClaude(id: String) async throws
+    func fetchChatMessages(serviceId: String) async throws -> [ChatMessage]
+    func saveChatMessage(serviceId: String, role: String, content: String) async throws
 }
 
 struct CrmRepository: CrmDataProviding {
@@ -468,5 +470,21 @@ struct CrmRepository: CrmDataProviding {
     }
     func disconnectClaude(id: String) async throws {
         try await client.from("ai_account").delete().eq("id", value: id).execute()
+    }
+    func fetchChatMessages(serviceId: String) async throws -> [ChatMessage] {
+        struct Row: Decodable { let role: String; let content: String }
+        let rows: [Row] = try await client.from("ai_message")
+            .select("role,content")
+            .eq("service_id", value: serviceId)
+            .order("created_at", ascending: true)
+            .limit(500)
+            .execute().value
+        return rows.map { ChatMessage(role: $0.role == "user" ? .user : .assistant, text: $0.content) }
+    }
+    func saveChatMessage(serviceId: String, role: String, content: String) async throws {
+        struct NewMsg: Encodable { let service_id: String; let role: String; let content: String }
+        try await client.from("ai_message")
+            .insert(NewMsg(service_id: serviceId, role: role, content: content))
+            .execute()
     }
 }

@@ -19,11 +19,10 @@ struct AIChatView: View {
         }
         .background(Palette.canvas)
         .task {
-            vm.serviceId = serviceId
-            await vm.refreshConnection()
+            await vm.bind(serviceId: serviceId)
             inputFocused = true
         }
-        .onChange(of: serviceId) { _, new in vm.serviceId = new }
+        .onChange(of: serviceId) { _, new in Task { await vm.bind(serviceId: new) } }
     }
 
     private var header: some View {

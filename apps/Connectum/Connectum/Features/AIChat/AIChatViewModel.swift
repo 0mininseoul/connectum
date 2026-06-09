@@ -14,11 +14,22 @@ final class AIChatViewModel {
 
     private let repo: CrmDataProviding
     private let client = AIChatStreamClient()
+    private var loadedServiceId: String?
 
     init(repo: CrmDataProviding = CrmRepository()) { self.repo = repo }
 
     func refreshConnection() async {
         connected = (try? await repo.fetchAIAccount()).flatMap { $0 } != nil
+    }
+
+    // Bind the panel to the selected service: refresh connection and load that
+    // service's persisted chat thread (each service has its own history).
+    func bind(serviceId: String?) async {
+        self.serviceId = serviceId
+        await refreshConnection()
+        guard let serviceId, serviceId != loadedServiceId else { return }
+        loadedServiceId = serviceId
+        messages = (try? await repo.fetchChatMessages(serviceId: serviceId)) ?? []
     }
 
     func send() async {
@@ -62,6 +73,10 @@ final class AIChatViewModel {
             return
         }
         await typeOut(fullText, idx: idx)
+        // Persist the turn so the thread survives app restarts. (serviceId is the
+        // non-optional value unwrapped by the guard at the top of send().)
+        try? await repo.saveChatMessage(serviceId: serviceId, role: "user", content: trimmed)
+        try? await repo.saveChatMessage(serviceId: serviceId, role: "assistant", content: fullText)
     }
 
     // Typewriter reveal of the received answer.
