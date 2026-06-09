@@ -1,8 +1,8 @@
 import SwiftUI
 
 struct AIChatView: View {
+    @Bindable var vm: AIChatViewModel
     let serviceId: String?
-    @State private var vm = AIChatViewModel()
     @FocusState private var inputFocused: Bool
 
     var body: some View {

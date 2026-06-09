@@ -27,8 +27,7 @@ final class AIChatViewModel {
         inputText = ""
         errorText = nil
         messages.append(ChatMessage(role: .user, text: trimmed))
-        var assistant = ChatMessage(role: .assistant, text: "", isStreaming: true)
-        messages.append(assistant)
+        messages.append(ChatMessage(role: .assistant, text: "", isStreaming: true))
         let idx = messages.count - 1
         isStreaming = true
         defer { isStreaming = false; statusText = nil }
@@ -38,20 +37,15 @@ final class AIChatViewModel {
             ["role": m.role == .user ? "user" : "assistant", "content": m.text]
         }
 
+        // Accumulate the full answer, then reveal it character by character.
+        var fullText = ""
         do {
             try await client.stream(serviceId: serviceId, messages: wire) { [weak self] chunk in
                 guard let self else { return }
                 switch chunk {
-                case .status(let tool):
-                    self.statusText = self.statusLabel(tool)
-                case .text(let t):
-                    assistant.text += t
-                    assistant.isStreaming = true
-                    self.messages[idx] = assistant
-                case .done:
-                    assistant.isStreaming = false
-                    self.messages[idx] = assistant
-                    self.statusText = nil
+                case .status(let tool): self.statusText = self.statusLabel(tool)
+                case .text(let t): fullText += t
+                case .done: self.statusText = nil
                 }
             }
         } catch AIChatStreamError.reauthRequired {
@@ -60,11 +54,32 @@ final class AIChatViewModel {
         } catch {
             errorText = "오류: \(error.localizedDescription)"
         }
-        assistant.isStreaming = false
-        if idx < messages.count { messages[idx] = assistant }
-        if assistant.text.isEmpty && errorText == nil {
-            errorText = "응답이 비어 있습니다. (스트림은 끝났지만 텍스트가 없음)"
+        statusText = nil
+
+        if fullText.isEmpty {
+            if idx < messages.count { messages[idx].isStreaming = false }
+            if errorText == nil { errorText = "응답이 비어 있습니다." }
+            return
         }
+        await typeOut(fullText, idx: idx)
+    }
+
+    // Typewriter reveal of the received answer.
+    private func typeOut(_ text: String, idx: Int) async {
+        let chars = Array(text)
+        let perTick = max(1, chars.count / 120)   // ~120 ticks max, regardless of length
+        var shown = ""
+        var i = 0
+        while i < chars.count {
+            guard idx < messages.count else { return }
+            let end = min(i + perTick, chars.count)
+            shown += String(chars[i..<end])
+            messages[idx].text = shown
+            messages[idx].isStreaming = true
+            i = end
+            try? await Task.sleep(nanoseconds: 14_000_000) // ~14ms per tick
+        }
+        if idx < messages.count { messages[idx].isStreaming = false }
     }
 
     private func statusLabel(_ tool: String) -> String {

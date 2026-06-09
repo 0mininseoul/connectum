@@ -199,6 +199,8 @@ final class ShellModel {
     }
 
     var aiPanelVisible = false
+    // Owned here so chat history survives panel open/close within a session.
+    let aiChat = AIChatViewModel()
     func toggleAIPanel() { aiPanelVisible.toggle() }
 
     func toggleSidebar() {
