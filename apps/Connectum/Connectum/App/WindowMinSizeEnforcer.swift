@@ -61,7 +61,20 @@ final class WindowMinSizeView: NSView {
             if frame.height != oldHeight {
                 frame.origin.y -= frame.height - oldHeight
             }
-            if frame.size != window.frame.size {
+
+            // Keep the window within the visible screen. Opening the AI-chat
+            // inspector grows the window wider; without this it can spill off
+            // both edges (sidebar off-screen left, inspector off-screen right).
+            if let visible = window.screen?.visibleFrame {
+                frame.size.width = min(frame.size.width, visible.width)
+                frame.size.height = min(frame.size.height, visible.height)
+                if frame.maxX > visible.maxX { frame.origin.x = visible.maxX - frame.width }
+                if frame.minX < visible.minX { frame.origin.x = visible.minX }
+                if frame.maxY > visible.maxY { frame.origin.y = visible.maxY - frame.height }
+                if frame.minY < visible.minY { frame.origin.y = visible.minY }
+            }
+
+            if frame != window.frame {
                 window.setFrame(frame, display: true, animate: false)
             }
         }

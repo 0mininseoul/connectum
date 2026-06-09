@@ -100,6 +100,15 @@ final class DashboardViewModel {
         persist(serviceId: serviceId)
     }
 
+    func renameKPI(id: String, title: String, serviceId: String) {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              let idx = kpiState.items.firstIndex(where: { $0.id == id })
+        else { return }
+        kpiState.items[idx].title = trimmed
+        persist(serviceId: serviceId)
+    }
+
     func moveKPI(movingId: String, before targetId: String, serviceId: String) {
         guard movingId != targetId,
               let from = kpiState.items.firstIndex(where: { $0.id == movingId }),
@@ -195,6 +204,8 @@ struct DashboardView: View {
     let refreshID: Int
     @State private var vm = DashboardViewModel()
     @State private var isShowingKPISheet = false
+    @State private var renamingKPI: DashboardKPIDefinition?
+    @State private var renameText = ""
 
     init(serviceId: String?, refreshID: Int = 0) {
         self.serviceId = serviceId
@@ -220,6 +231,19 @@ struct DashboardView: View {
         .sheet(isPresented: $isShowingKPISheet) {
             KPICreationSheet(vm: vm, serviceId: serviceId)
                 .frame(width: 560)
+        }
+        .alert("KPI 이름 수정", isPresented: Binding(
+            get: { renamingKPI != nil },
+            set: { if !$0 { renamingKPI = nil } }
+        )) {
+            TextField("이름", text: $renameText)
+            Button("저장") {
+                if let kpi = renamingKPI, let serviceId {
+                    vm.renameKPI(id: kpi.id, title: renameText, serviceId: serviceId)
+                }
+                renamingKPI = nil
+            }
+            Button("취소", role: .cancel) { renamingKPI = nil }
         }
         .task(id: "\(serviceId ?? ""):\(refreshID)") {
             guard let serviceId else { return }
@@ -267,6 +291,10 @@ struct DashboardView: View {
                     subtitle: vm.subtitle(for: definition),
                     isSelected: vm.selectedDefinition?.id == definition.id,
                     isGenerating: definition.kind == .custom && vm.chartMessage(for: definition) != nil,
+                    onRename: {
+                        renameText = definition.title
+                        renamingKPI = definition
+                    },
                     onDelete: {
                         if let serviceId {
                             vm.deleteKPI(id: definition.id, serviceId: serviceId)
@@ -365,31 +393,22 @@ private struct KPICardView: View {
     let subtitle: String
     let isSelected: Bool
     let isGenerating: Bool
+    let onRename: () -> Void
     let onDelete: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: Spacing.sm) {
-            HStack(alignment: .top, spacing: Spacing.sm) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title)
-                        .font(Typography.caption)
-                        .foregroundStyle(Palette.muted)
-                        .lineLimit(1)
-                    Text(subtitle)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(isGenerating ? Palette.accentBlue : Palette.ash)
-                        .lineLimit(1)
-                }
-                Spacer(minLength: Spacing.sm)
-                Button(action: onDelete) {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(Palette.muted)
-                        .frame(width: 22, height: 22)
-                }
-                .buttonStyle(.plain)
-                .help("KPI 삭제")
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(Typography.caption)
+                    .foregroundStyle(Palette.muted)
+                    .lineLimit(1)
+                Text(subtitle)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(isGenerating ? Palette.accentBlue : Palette.ash)
+                    .lineLimit(1)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             Text(value)
                 .font(.system(size: 26, weight: .semibold))
                 .foregroundStyle(Palette.ink)
@@ -404,6 +423,10 @@ private struct KPICardView: View {
                 .stroke(isSelected ? Palette.accentBlue : Palette.hairline, lineWidth: isSelected ? 1.4 : 1)
         }
         .contentShape(RoundedRectangle(cornerRadius: Radius.card))
+        .contextMenu {
+            Button { onRename() } label: { Label("이름 수정", systemImage: "pencil") }
+            Button(role: .destructive) { onDelete() } label: { Label("삭제", systemImage: "trash") }
+        }
     }
 }
 

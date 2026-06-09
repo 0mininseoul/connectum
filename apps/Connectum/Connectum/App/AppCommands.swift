@@ -30,7 +30,7 @@ struct ConnectumCommands: Commands {
 
         CommandGroup(after: .sidebar) {
             Button("사이드바 보기/숨기기") { shell.toggleSidebar() }
-                .keyboardShortcut("₩", modifiers: [])
+                .keyboardShortcut("₩", modifiers: .command)
             Divider()
             Button("확대") { shell.zoomIn() }
                 .keyboardShortcut("+", modifiers: .command)
