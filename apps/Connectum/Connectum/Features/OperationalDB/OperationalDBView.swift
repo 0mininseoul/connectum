@@ -22,6 +22,7 @@ struct OperationalDBView: View {
     @State private var sortOrder = [CrmUserSortComparator(columnID: "created_at", primaryColumnID: OperationalDBViewModel.emailCol, order: .reverse)]
     @State private var pendingExclusion: CrmUser?
     @State private var showSearch = false
+    @State private var selectedSourceTableId: String?   // nil = the user table (crm_user)
     @FocusState private var tableFocused: Bool
     @FocusState private var searchFocused: Bool
     @AppStorage(AppPreferenceKeys.userDetailOpenMode) private var detailOpenModeRaw = UserDetailOpenMode.side.rawValue
@@ -34,11 +35,16 @@ struct OperationalDBView: View {
     var body: some View {
         HStack(spacing: 0) {
             VStack(spacing: 0) {
-                viewTabs(vm)
-                Divider().overlay(Palette.hairline)
-                controls(vm)
-                Divider().overlay(Palette.hairline)
-                table(vm)
+                sourceTabs(vm)
+                if let related = vm.relatedTables.first(where: { $0.id == selectedSourceTableId }) {
+                    MirroredTableView(table: related, refreshID: refreshID)
+                } else {
+                    viewTabs(vm)
+                    Divider().overlay(Palette.hairline)
+                    controls(vm)
+                    Divider().overlay(Palette.hairline)
+                    table(vm)
+                }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
@@ -160,6 +166,42 @@ struct OperationalDBView: View {
             guard serviceId != nil else { return }
             showSearchField()
         }
+    }
+
+    // Source-table switcher: the user table (rich crm_user UI) plus any extra
+    // imported tables. Only shown when there's more than one source to choose.
+    @ViewBuilder private func sourceTabs(_ vm: OperationalDBViewModel) -> some View {
+        if !vm.relatedTables.isEmpty {
+            HStack(spacing: Spacing.xs) {
+                sourceTab(icon: "person.2.fill", title: "유저", active: selectedSourceTableId == nil) {
+                    selectedSourceTableId = nil
+                }
+                ForEach(vm.relatedTables) { t in
+                    sourceTab(icon: "tablecells", title: t.displayName, active: selectedSourceTableId == t.id) {
+                        selectedSourceTableId = t.id
+                    }
+                }
+                Spacer()
+            }
+            .padding(.horizontal, Spacing.sm).padding(.vertical, Spacing.xs)
+            Divider().overlay(Palette.hairline)
+        }
+    }
+
+    private func sourceTab(icon: String, title: String, active: Bool, _ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: Spacing.xs) {
+                Image(systemName: icon).font(.system(size: 11, weight: .semibold))
+                Text(title).font(.system(size: 12, weight: active ? .semibold : .medium)).lineLimit(1)
+            }
+            .foregroundStyle(active ? Palette.ink : Palette.muted)
+            .padding(.horizontal, Spacing.sm).frame(height: 26)
+            .background(active ? Palette.surfaceElevated : Color.clear)
+            .clipShape(RoundedRectangle(cornerRadius: Radius.row))
+            .overlay {
+                if active { RoundedRectangle(cornerRadius: Radius.row).stroke(Palette.hairline) }
+            }
+        }.buttonStyle(.plain)
     }
 
     // Notion-style view tabs across the top.

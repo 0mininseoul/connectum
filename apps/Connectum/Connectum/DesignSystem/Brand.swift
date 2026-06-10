@@ -18,6 +18,24 @@ struct ClaudeMark: View {
     }
 }
 
+// A third-party brand logo from the asset catalog. Full-color marks render as-is;
+// monochrome marks (isTemplate) are tinted to the brand color.
+struct ProviderLogo: View {
+    let assetName: String
+    var isTemplate: Bool = false
+    var size: CGFloat = 18
+    var tint: Color = .primary
+
+    var body: some View {
+        Image(assetName)
+            .renderingMode(isTemplate ? .template : .original)
+            .resizable()
+            .scaledToFit()
+            .foregroundStyle(tint)   // ignored for full-color (.original) marks
+            .frame(width: size, height: size)
+    }
+}
+
 // A rounded, softly-tinted square that holds a small brand icon or symbol — the
 // Raycast-style "icon chip" used across connection rows and cards for visual depth.
 struct IconChip<Content: View>: View {

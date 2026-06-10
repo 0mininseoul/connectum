@@ -70,6 +70,8 @@ protocol CrmDataProviding: Sendable {
     func deleteAmplitudeAccount(id: String) async throws
     func deleteAxiomAccount(id: String) async throws
     func updateServiceSupabaseAccount(serviceId: String, accountId: String) async throws
+    func updateServiceAmplitudeAccount(serviceId: String, accountId: String) async throws
+    func updateServiceAxiomAccount(serviceId: String, accountId: String, dataset: String?) async throws
     func fetchSupabaseAccountProfile(id: String) async throws -> String?
     func listAxiomDatasets(accountId: String) async throws -> [String]
     func listProjects(supabaseAccountId: String) async throws -> [ProjectInfo]
@@ -79,6 +81,10 @@ protocol CrmDataProviding: Sendable {
     func listColumns(supabaseAccountId: String, projectRef: String, schema: String, table: String) async throws -> [ColumnInfo]
     func fetchDisplayColumns(serviceId: String) async throws -> [String]
     func updateDisplayColumns(serviceId: String, columns: [String]) async throws
+    func fetchServiceTables(serviceId: String) async throws -> [ServiceTableInfo]
+    func addRelatedTable(serviceId: String, schema: String, table: String) async throws
+    func removeServiceTable(id: String) async throws
+    func fetchMirroredRows(serviceTableId: String, limit: Int) async throws -> [MirroredRow]
     func fetchAIAccount() async throws -> AIAccount?
     func connectClaude(code: String, state: String?, codeVerifier: String, redirectURI: String) async throws
     func disconnectClaude(id: String) async throws
@@ -409,6 +415,20 @@ struct CrmRepository: CrmDataProviding {
             .eq("id", value: serviceId)
             .execute()
     }
+    func updateServiceAmplitudeAccount(serviceId: String, accountId: String) async throws {
+        struct Upd: Encodable { let amplitude_account_id: String }
+        try await client.from("service")
+            .update(Upd(amplitude_account_id: accountId))
+            .eq("id", value: serviceId)
+            .execute()
+    }
+    func updateServiceAxiomAccount(serviceId: String, accountId: String, dataset: String?) async throws {
+        struct Upd: Encodable { let axiom_account_id: String; let axiom_dataset: String? }
+        try await client.from("service")
+            .update(Upd(axiom_account_id: accountId, axiom_dataset: dataset))
+            .eq("id", value: serviceId)
+            .execute()
+    }
     func fetchSupabaseAccountProfile(id: String) async throws -> String? {
         struct B: Encodable { let account_id: String }
         struct R: Decodable { let account_name: String? }
@@ -523,6 +543,43 @@ struct CrmRepository: CrmDataProviding {
             .update(Upd(display_columns: columns))
             .eq("service_id", value: serviceId).eq("role", value: "user_table")
             .execute()
+    }
+
+    func fetchServiceTables(serviceId: String) async throws -> [ServiceTableInfo] {
+        try await client.from("service_table")
+            .select("id,source_schema,source_table,role")
+            .eq("service_id", value: serviceId)
+            .order("role", ascending: false)   // user_table before related
+            .order("source_table", ascending: true)
+            .execute().value
+    }
+
+    func addRelatedTable(serviceId: String, schema: String, table: String) async throws {
+        struct NewTable: Encodable {
+            let service_id: String
+            let source_schema: String
+            let source_table: String
+            let role = "related"
+            let column_map: [String: String] = ["pk": "id"]
+            let cursor_column = "created_at"
+            let display_columns: [String] = []
+        }
+        try await client.from("service_table")
+            .insert(NewTable(service_id: serviceId, source_schema: schema, source_table: table))
+            .execute()
+    }
+
+    func removeServiceTable(id: String) async throws {
+        // mirrored_row has ON DELETE CASCADE, so the synced rows go with it.
+        try await client.from("service_table").delete().eq("id", value: id).execute()
+    }
+
+    func fetchMirroredRows(serviceTableId: String, limit: Int = 500) async throws -> [MirroredRow] {
+        try await client.from("mirrored_row")
+            .select("id,source_pk,data")
+            .eq("service_table_id", value: serviceTableId)
+            .limit(limit)
+            .execute().value
     }
     func fetchAIAccount() async throws -> AIAccount? {
         let rows: [AIAccount] = try await client.from("ai_account")

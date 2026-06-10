@@ -16,6 +16,7 @@ final class OperationalDBViewModel {
     var savedViews: [SavedView] = []
     var activeViewId: String?            // nil = the editable "기본" view
     var serviceId: String?
+    var relatedTables: [ServiceTableInfo] = []   // extra imported tables (role = related)
     private(set) var profileColumns: [String] = []
     private var baseDisplayColumns: [String] = []   // service default (from the wizard)
 
@@ -201,6 +202,8 @@ final class OperationalDBViewModel {
             users = freshUsers
             savedViews = freshViews
             baseDisplayColumns = freshDisplayColumns
+            relatedTables = (try? await repo.fetchServiceTables(serviceId: serviceId))?
+                .filter { !$0.isUserTable } ?? []
             let snapshot = OperationalDBCacheSnapshot(
                 serviceId: serviceId,
                 cachedAt: Date(),
