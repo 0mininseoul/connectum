@@ -23,6 +23,7 @@ struct ServiceBriefView: View {
         VStack(alignment: .leading, spacing: 0) {
             header
             Divider()
+            statusStrip
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     if model.interviewActive {
@@ -54,10 +55,36 @@ struct ServiceBriefView: View {
             Image(systemName: "doc.text.magnifyingglass")
             Text("서비스 브리프").font(.headline)
             Spacer()
-            if model.isBusy { ProgressView().controlSize(.small) }
-            Button("닫기") { dismiss() }
+            // "완료" once the brief has content — reads as a confirmation, not a bail-out.
+            // (No .defaultAction: Return belongs to the prompt field's submit.)
+            Button(model.isEmpty ? "닫기" : "완료") { dismiss() }
         }
         .padding()
+    }
+
+    // Live feedback for any in-flight action (so a prompt edit shows more than the
+    // old top-right spinner), and a brief success confirmation afterwards.
+    @ViewBuilder private var statusStrip: some View {
+        if let s = model.busyStatus {
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text(s).font(.callout).foregroundStyle(.secondary)
+                    .lineLimit(1).truncationMode(.middle)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal).padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.accentColor.opacity(0.10))
+        } else if let s = model.successText {
+            HStack(spacing: 8) {
+                Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                Text(s).font(.callout)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal).padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.green.opacity(0.12))
+        }
     }
 
     private var emptyState: some View {

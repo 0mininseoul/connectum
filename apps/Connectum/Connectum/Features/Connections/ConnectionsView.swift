@@ -36,6 +36,13 @@ enum ConnectionProvider: String, CaseIterable, Identifiable {
         case .axiom: return "로그/히스토리"
         }
     }
+    var brandColor: Color {
+        switch self {
+        case .supabase: return Color(hex: "3ECF8E")  // Supabase green
+        case .amplitude: return Color(hex: "2E6DF6") // Amplitude blue
+        case .axiom: return Color(hex: "8A63D2")     // Axiom indigo
+        }
+    }
 }
 
 private struct ConnectedAccountDeletion: Identifiable {
@@ -839,12 +846,14 @@ private struct ConnectedAccountsPanel: View {
         let missingRequiredSource = isMissingRequiredSource(provider)
         let missingReferencedAccount = hasMissingReferencedAccount(provider: provider, accounts: accounts)
         let isMissing = missingRequiredSource || missingReferencedAccount
+        let tint = isMissing ? Palette.accentYellow : provider.brandColor
         return VStack(alignment: .leading, spacing: Spacing.sm) {
-            HStack(spacing: Spacing.sm) {
-                Image(systemName: provider.icon)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(isMissing ? Palette.accentYellow : Palette.accentBlue)
-                    .frame(width: 18)
+            HStack(spacing: Spacing.md) {
+                IconChip(tint: tint, size: 30) {
+                    Image(systemName: provider.icon)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(tint)
+                }
                 VStack(alignment: .leading, spacing: 2) {
                     Text(provider.displayTitle)
                         .font(Typography.caption)
@@ -854,9 +863,7 @@ private struct ConnectedAccountsPanel: View {
                         .foregroundStyle(Palette.muted)
                 }
                 Spacer()
-                Text(groupStatusText(accounts: accounts, isMissing: isMissing))
-                    .font(Typography.caption)
-                    .foregroundStyle(isMissing ? Palette.accentYellow : (accounts.isEmpty ? Palette.ash : Palette.accentGreen))
+                groupStatusBadge(accounts: accounts, isMissing: isMissing)
             }
             if isMissing {
                 HStack(spacing: Spacing.sm) {
@@ -873,7 +880,7 @@ private struct ConnectedAccountsPanel: View {
                     }
                     Spacer(minLength: Spacing.sm)
                 }
-                .padding(.leading, 26)
+                .padding(.leading, 42)
             }
             ForEach(accounts) { account in
                 HStack(spacing: Spacing.sm) {
@@ -901,7 +908,7 @@ private struct ConnectedAccountsPanel: View {
                     .disabled(vm.isBusy)
                     .help("\(provider.displayTitle) 계정 삭제")
                 }
-                .padding(.leading, 26)
+                .padding(.leading, 42)
             }
         }
         .padding(.vertical, Spacing.sm)
@@ -910,9 +917,19 @@ private struct ConnectedAccountsPanel: View {
         }
     }
 
-    private func groupStatusText(accounts: [ConnAccount], isMissing: Bool) -> String {
-        if isMissing { return "복구 필요" }
-        return accounts.isEmpty ? "없음" : "\(accounts.count)"
+    @ViewBuilder private func groupStatusBadge(accounts: [ConnAccount], isMissing: Bool) -> some View {
+        if isMissing {
+            StatusPill(text: "복구 필요", color: Palette.accentYellow)
+        } else if accounts.isEmpty {
+            Text("없음")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(Palette.ash)
+                .padding(.horizontal, Spacing.sm)
+                .padding(.vertical, 3)
+                .background(Palette.ash.opacity(0.10), in: Capsule())
+        } else {
+            StatusPill(text: "연결됨", color: Palette.accentGreen)
+        }
     }
 
     private func isMissingRequiredSource(_ provider: ConnectionProvider) -> Bool {
@@ -1014,12 +1031,10 @@ private struct ClaudeConnectCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Spacing.md) {
-            HStack(spacing: Spacing.sm) {
-                Image(systemName: "sparkles")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(Palette.accentBlue)
+            HStack(spacing: Spacing.md) {
+                IconChip(tint: Palette.claude, size: 38) { ClaudeMark(size: 20) }
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Claude (AI)")
+                    Text("Claude")
                         .font(Typography.body)
                         .foregroundStyle(Palette.ink)
                     Text("AI 채팅 (⌘I) · 워크스페이스 전역")
@@ -1028,10 +1043,7 @@ private struct ClaudeConnectCard: View {
                 }
                 Spacer()
                 if vm.claude != nil {
-                    HStack(spacing: Spacing.xs) {
-                        Circle().fill(Palette.accentGreen).frame(width: 7, height: 7)
-                        Text("연결됨").font(Typography.caption).foregroundStyle(Palette.accentGreen)
-                    }
+                    StatusPill(text: "연결됨", color: Palette.accentGreen)
                 }
             }
 

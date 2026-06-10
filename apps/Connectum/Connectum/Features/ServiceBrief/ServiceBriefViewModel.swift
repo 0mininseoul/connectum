@@ -7,6 +7,9 @@ final class ServiceBriefViewModel {
     var sections = BriefSections()
     var status = "empty"
     var isBusy = false
+    var busyStatus: String?      // human-readable "what's happening now" while isBusy
+    var successText: String?     // transient "done" confirmation; auto-clears
+    private var successToken = UUID()
     var errorText: String?
     var promptText = ""
 
@@ -42,7 +45,7 @@ final class ServiceBriefViewModel {
 
     // First-pass draft from connection signals only.
     func autodraft() async {
-        await runCapturingGaps {
+        await runCapturingGaps(busy: "연동 정보로 초안을 만드는 중…", success: "초안을 만들었어요") {
             try await self.repo.synthesizeBrief(serviceId: self.serviceId, document: nil, transcript: nil, currentSections: nil, userPrompt: nil)
         }
     }
@@ -54,7 +57,7 @@ final class ServiceBriefViewModel {
         // concurrent send, so clearing first would silently discard the typed text.
         guard !p.isEmpty, !isBusy else { return }
         promptText = ""
-        await run {
+        await run(busy: "“\(p)” 반영 중…", success: "브리프에 반영했어요") {
             try await self.repo.synthesizeBrief(serviceId: self.serviceId, document: nil, transcript: nil, currentSections: self.sections, userPrompt: p)
         }
     }
@@ -66,7 +69,7 @@ final class ServiceBriefViewModel {
         guard !t.isEmpty else { return }
         pasteText = ""
         showPasteSheet = false
-        await runCapturingGaps {
+        await runCapturingGaps(busy: "문서를 분석하는 중…", success: "문서를 브리프에 반영했어요") {
             try await self.repo.synthesizeBrief(serviceId: self.serviceId, document: t, transcript: nil, currentSections: nil, userPrompt: nil)
         }
     }
@@ -76,7 +79,7 @@ final class ServiceBriefViewModel {
             // Read + PDF text extraction can be slow on large files; keep it off the
             // @MainActor so the UI doesn't freeze while a big PDF is parsed.
             let text = try await Self.extractText(from: url)
-            await runCapturingGaps {
+            await runCapturingGaps(busy: "문서를 분석하는 중…", success: "문서를 브리프에 반영했어요") {
                 try await self.repo.synthesizeBrief(serviceId: self.serviceId, document: text, transcript: nil, currentSections: nil, userPrompt: nil)
             }
         } catch {
@@ -122,8 +125,10 @@ final class ServiceBriefViewModel {
     private func nextInterviewStep() async {
         guard !isBusy else { return }
         isBusy = true
+        busyStatus = "다음 질문을 준비하는 중…"
         errorText = nil
-        defer { isBusy = false }
+        successText = nil
+        defer { isBusy = false; busyStatus = nil }
         do {
             let step = try await repo.interviewStep(serviceId: serviceId, transcript: transcriptWire(), targetSections: interviewTargets)
             let finished: Bool
@@ -142,11 +147,13 @@ final class ServiceBriefViewModel {
                 finished = true
             }
             if finished {
+                busyStatus = "인터뷰 내용을 브리프로 정리하는 중…"
                 interviewActive = false
                 let b = try await repo.synthesizeBrief(serviceId: serviceId, document: nil, transcript: transcriptWire(), currentSections: sections, userPrompt: nil)
                 sections = b.sections
                 status = b.status
                 pendingGaps = b.gaps ?? []
+                flashSuccess("인터뷰 내용을 브리프에 반영했어요")
             }
         } catch {
             errorText = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
@@ -156,30 +163,49 @@ final class ServiceBriefViewModel {
 
     // MARK: Helpers
 
-    private func run(_ op: @escaping () async throws -> ServiceBrief) async {
+    // Shows a success confirmation that auto-clears after a few seconds (unless a
+    // newer action replaces it). The token guards against an older timer wiping a
+    // fresher message.
+    private func flashSuccess(_ msg: String) {
+        successText = msg
+        let token = UUID()
+        successToken = token
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            if successToken == token { successText = nil }
+        }
+    }
+
+    private func run(busy: String, success: String, _ op: @escaping () async throws -> ServiceBrief) async {
         guard !isBusy else { return }
         isBusy = true
+        busyStatus = busy
         errorText = nil
-        defer { isBusy = false }
+        successText = nil
+        defer { isBusy = false; busyStatus = nil }
         do {
             let b = try await op()
             sections = b.sections
             status = b.status
+            flashSuccess(success)
         } catch {
             errorText = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
     }
 
-    private func runCapturingGaps(_ op: @escaping () async throws -> ServiceBrief) async {
+    private func runCapturingGaps(busy: String, success: String, _ op: @escaping () async throws -> ServiceBrief) async {
         guard !isBusy else { return }
         isBusy = true
+        busyStatus = busy
         errorText = nil
-        defer { isBusy = false }
+        successText = nil
+        defer { isBusy = false; busyStatus = nil }
         do {
             let b = try await op()
             sections = b.sections
             status = b.status
             pendingGaps = b.gaps ?? []
+            flashSuccess(success)
         } catch {
             errorText = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
