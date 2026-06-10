@@ -169,6 +169,7 @@ final class OperationalDBViewModel {
 
     @discardableResult
     func loadCached(serviceId: String) async -> Bool {
+        if serviceId != self.serviceId { relatedTables = [] }  // don't carry a prior service's tables
         self.serviceId = serviceId
         do {
             let cache = self.cache

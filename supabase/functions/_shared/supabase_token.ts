@@ -29,13 +29,17 @@ export async function tokenForSupabaseAccount(accountId: string): Promise<string
   // atomic conditional UPDATE — exactly one caller refreshes; the rest wait for
   // the rotated token and reuse it instead of sending the consumed one.
   const staleIso = new Date(Date.now() - 30_000).toISOString();
-  const { data: claimed } = await db.from("supabase_account")
+  const { data: claimed, error: claimErr } = await db.from("supabase_account")
     .update({ refresh_lock_at: new Date().toISOString() })
     .eq("id", accountId)
     .or(`refresh_lock_at.is.null,refresh_lock_at.lt.${staleIso}`)
     .select("id");
 
-  if (!claimed?.length) {
+  // Only wait if we definitively LOST the claim. A transient error on the claim
+  // statement means we can't coordinate — fall through and refresh ourselves
+  // rather than poll and return a stale/expired token (a lone caller has no
+  // contender to double-refresh against).
+  if (!claimErr && !claimed?.length) {
     for (let i = 0; i < 12; i++) {
       await new Promise((r) => setTimeout(r, 600));
       const { data: fresh } = await db.from("supabase_account")

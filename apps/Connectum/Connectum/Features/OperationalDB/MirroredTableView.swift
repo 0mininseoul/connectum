@@ -7,17 +7,23 @@ final class MirroredTableViewModel {
     var columns: [String] = []
     var isLoading = false
     var errorMessage: String?
+    private var loadedTableId: String?
 
     private let repo: CrmDataProviding
     init(repo: CrmDataProviding = CrmRepository()) { self.repo = repo }
 
     func load(serviceTableId: String) async {
+        // Switching tables: drop the previous table's rows so a slow/failed load
+        // never shows stale data under the new table's header.
+        if serviceTableId != loadedTableId { rows = []; columns = []; errorMessage = nil }
         isLoading = rows.isEmpty
         defer { isLoading = false }
         do {
             let fetched = try await repo.fetchMirroredRows(serviceTableId: serviceTableId, limit: 1000)
+            let cols = await Task.detached { Self.orderedColumns(from: fetched) }.value
             rows = fetched
-            columns = Self.orderedColumns(from: fetched)
+            columns = cols
+            loadedTableId = serviceTableId
             errorMessage = nil
         } catch {
             errorMessage = String(describing: error)
@@ -26,7 +32,7 @@ final class MirroredTableViewModel {
 
     // Union of every row's keys, with common identity/time columns surfaced first
     // and the rest alphabetised, so the table layout is stable across loads.
-    private static func orderedColumns(from rows: [MirroredRow]) -> [String] {
+    private nonisolated static func orderedColumns(from rows: [MirroredRow]) -> [String] {
         var seen = Set<String>()
         for r in rows { for k in r.data.keys { seen.insert(k) } }
         let priority = ["id", "created_at", "updated_at", "name", "title", "email"]

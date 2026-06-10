@@ -80,6 +80,13 @@ final class ImportedTablesEditorModel {
             return true
         } catch {
             errorMessage = "저장 실패: \(error.localizedDescription)"
+            // A partial diff may have applied; re-sync `current`/`selected` to the
+            // actual DB state so the UI doesn't disagree with what was saved.
+            if let cur = try? await repo.fetchServiceTables(serviceId: service.id) {
+                current = cur
+                userTableKey = cur.first(where: { $0.isUserTable }).map(key)
+                selected = Set(cur.map(key))
+            }
             return false
         }
     }

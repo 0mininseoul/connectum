@@ -109,6 +109,7 @@ struct OperationalDBView: View {
                 selection = nil
                 sheetUser = nil
                 sideUser = nil
+                selectedSourceTableId = nil   // reset source-table tab on service switch
                 vm.search = ""
                 showSearch = false
                 await Task.yield()

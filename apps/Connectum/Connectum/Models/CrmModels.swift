@@ -298,6 +298,15 @@ struct MirroredRow: Codable, Identifiable, Hashable, Sendable {
         case sourcePk = "source_pk"
         case data
     }
+
+    // Decode `data` defensively: a NULL/absent jsonb payload must not fail the
+    // whole fetch (one bad row would blank the entire table).
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        sourcePk = try c.decode(String.self, forKey: .sourcePk)
+        data = (try? c.decode([String: JSONScalar].self, forKey: .data)) ?? [:]
+    }
 }
 
 // Latest distributable build advertised to the app for the update check.
