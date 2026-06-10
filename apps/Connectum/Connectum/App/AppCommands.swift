@@ -29,8 +29,12 @@ struct ConnectumCommands: Commands {
         }
 
         CommandGroup(after: .sidebar) {
+            // ⌘S (a letter key) instead of ⌘\: the backslash key emits ₩ in
+            // Korean input mode, so its key equivalent never matched. Letter-key
+            // Command shortcuts are input-source independent (⌘I already proves
+            // this). The app has no save action, so ⌘S is free to use here.
             Button("사이드바 보기/숨기기") { shell.toggleSidebar() }
-                .keyboardShortcut("₩", modifiers: .command)
+                .keyboardShortcut("s", modifiers: .command)
             Divider()
             Button("확대") { shell.zoomIn() }
                 .keyboardShortcut("+", modifiers: .command)

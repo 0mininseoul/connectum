@@ -46,13 +46,26 @@ struct MainShell: View {
                 ShellTabBar(shell: shell)
                 Divider().overlay(Palette.hairline)
                 content
+                    // AI chat slides in as a trailing overlay drawer. An overlay is
+                    // sized to its parent and never enlarges it, so opening the panel
+                    // can't push the window off-screen (a fixed-width HStack pane did,
+                    // because its 380pt added to the detail's minimum width and the
+                    // window grew to fit). It covers the right edge of the content.
+                    .overlay(alignment: .trailing) {
+                        if shell.aiPanelVisible {
+                            HStack(spacing: 0) {
+                                Divider().overlay(Palette.hairline)
+                                AIChatView(vm: shell.aiChat, serviceId: shell.selectedDataServiceId, isVisible: shell.aiPanelVisible)
+                                    .frame(width: 380)
+                            }
+                            .frame(maxHeight: .infinity)
+                            .background(Palette.canvas)
+                            .transition(.move(edge: .trailing))
+                        }
+                    }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Palette.canvas)
-            .inspector(isPresented: $shell.aiPanelVisible) {
-                AIChatView(vm: shell.aiChat, serviceId: shell.selectedDataServiceId, isVisible: shell.aiPanelVisible)
-                    .inspectorColumnWidth(min: 320, ideal: 380, max: 520)
-            }
         }
         .task { await shell.load() }
     }
@@ -415,6 +428,14 @@ struct ShellTabBar: View {
             Spacer()
             Label(shell.selectedServiceName, systemImage: "cylinder.split.1x2")
                 .font(Typography.caption).foregroundStyle(Palette.muted)
+            Button { shell.toggleAIPanel() } label: {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(shell.aiPanelVisible ? Palette.accentBlue : Palette.muted)
+                    .frame(width: 30, height: 30)
+            }
+            .buttonStyle(.plain)
+            .help("AI 채팅 (⌘I)")
         }
         .padding(.horizontal, Spacing.lg).padding(.vertical, Spacing.md)
         .background(Palette.canvas)
