@@ -62,10 +62,14 @@ final class WindowMinSizeView: NSView {
                 frame.origin.y -= frame.height - oldHeight
             }
 
-            // Keep the window within the visible screen. Opening the AI-chat
-            // inspector grows the window wider; without this it can spill off
-            // both edges (sidebar off-screen left, inspector off-screen right).
-            if let visible = window.screen?.visibleFrame {
+            // Safety net: keep the window within the visible screen. The AI chat
+            // is now a trailing overlay (it can't grow the window), but capping
+            // maxSize and clamping the frame guards against any other content
+            // driving the window past the screen edges. Fall back to the main
+            // screen because a window already off-screen reports `screen == nil`.
+            let screen = window.screen ?? NSScreen.main ?? NSScreen.screens.first
+            if let visible = screen?.visibleFrame {
+                window.maxSize = NSSize(width: visible.width, height: visible.height)
                 frame.size.width = min(frame.size.width, visible.width)
                 frame.size.height = min(frame.size.height, visible.height)
                 if frame.maxX > visible.maxX { frame.origin.x = visible.maxX - frame.width }
