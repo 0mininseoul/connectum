@@ -50,7 +50,9 @@ final class ServiceBriefViewModel {
     // Natural-language edit: Claude rewrites the brief at its discretion.
     func applyPrompt() async {
         let p = promptText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !p.isEmpty else { return }
+        // Check isBusy before clearing: `run` also guards isBusy and would no-op a
+        // concurrent send, so clearing first would silently discard the typed text.
+        guard !p.isEmpty, !isBusy else { return }
         promptText = ""
         await run {
             try await self.repo.synthesizeBrief(serviceId: self.serviceId, document: nil, transcript: nil, currentSections: self.sections, userPrompt: p)
@@ -71,16 +73,24 @@ final class ServiceBriefViewModel {
 
     func ingestFile(url: URL) async {
         do {
-            let needs = url.startAccessingSecurityScopedResource()
-            defer { if needs { url.stopAccessingSecurityScopedResource() } }
-            let data = try Data(contentsOf: url)
-            let text = try DocumentTextExtractor.extract(data: data, ext: url.pathExtension)
+            // Read + PDF text extraction can be slow on large files; keep it off the
+            // @MainActor so the UI doesn't freeze while a big PDF is parsed.
+            let text = try await Self.extractText(from: url)
             await runCapturingGaps {
                 try await self.repo.synthesizeBrief(serviceId: self.serviceId, document: text, transcript: nil, currentSections: nil, userPrompt: nil)
             }
         } catch {
             errorText = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
+    }
+
+    private nonisolated static func extractText(from url: URL) async throws -> String {
+        try await Task.detached(priority: .userInitiated) {
+            let needs = url.startAccessingSecurityScopedResource()
+            defer { if needs { url.stopAccessingSecurityScopedResource() } }
+            let data = try Data(contentsOf: url)
+            return try DocumentTextExtractor.extract(data: data, ext: url.pathExtension)
+        }.value
     }
 
     // MARK: Interview
@@ -95,7 +105,10 @@ final class ServiceBriefViewModel {
 
     func answerInterview(_ text: String) async {
         let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !t.isEmpty else { return }
+        // Guard isBusy before appending: nextInterviewStep no-ops while busy, so a
+        // double-submit (TextField.onSubmit isn't disabled) would append a user turn
+        // that never gets a reply.
+        guard !t.isEmpty, !isBusy else { return }
         interviewAnswer = ""
         interviewOptions = []
         interviewTurns.append(.init(role: "user", text: t))
@@ -113,11 +126,22 @@ final class ServiceBriefViewModel {
         defer { isBusy = false }
         do {
             let step = try await repo.interviewStep(serviceId: serviceId, transcript: transcriptWire(), targetSections: interviewTargets)
+            let finished: Bool
             switch step {
             case .question(let q, let opts):
-                interviewTurns.append(.init(role: "assistant", text: q))
-                interviewOptions = opts
+                // A blank question means off-spec model output; treat it as "done"
+                // and synthesize rather than showing an empty prompt that stalls.
+                if q.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    finished = true
+                } else {
+                    interviewTurns.append(.init(role: "assistant", text: q))
+                    interviewOptions = opts
+                    finished = false
+                }
             case .done:
+                finished = true
+            }
+            if finished {
                 interviewActive = false
                 let b = try await repo.synthesizeBrief(serviceId: serviceId, document: nil, transcript: transcriptWire(), currentSections: sections, userPrompt: nil)
                 sections = b.sections

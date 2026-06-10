@@ -10,6 +10,26 @@ struct BriefSections: Codable, Equatable, Sendable {
     var business_model: String = ""
     var current_focus: String = ""
 
+    init() {}
+
+    private enum CodingKeys: String, CodingKey {
+        case one_liner, icp, activation, signal_glossary, business_model, current_focus
+    }
+
+    // Decode defensively. Swift's synthesized Codable treats every stored property
+    // as required and ignores the `= ""` defaults above, so a `service_brief.sections`
+    // jsonb (or edge-function payload) missing any one key would throw and the whole
+    // brief would read as empty. Decode each key independently and fall back to "".
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        one_liner = (try? c.decode(String.self, forKey: .one_liner)) ?? ""
+        icp = (try? c.decode(String.self, forKey: .icp)) ?? ""
+        activation = (try? c.decode(String.self, forKey: .activation)) ?? ""
+        signal_glossary = (try? c.decode(String.self, forKey: .signal_glossary)) ?? ""
+        business_model = (try? c.decode(String.self, forKey: .business_model)) ?? ""
+        current_focus = (try? c.decode(String.self, forKey: .current_focus)) ?? ""
+    }
+
     static let displayOrder: [(key: String, label: String)] = [
         ("one_liner", "한 줄 소개"),
         ("icp", "타깃 고객 (ICP)"),

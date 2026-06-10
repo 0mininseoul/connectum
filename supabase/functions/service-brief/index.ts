@@ -29,6 +29,9 @@ function errorResponse(e: unknown): Response {
   if (msg.includes("ai_reauth_required")) {
     return json({ code: "ai_reauth_required", message: msg }, 401);
   }
+  if (msg.includes("service_not_found")) {
+    return json({ error: "service not found" }, 404);
+  }
   return json({ error: msg }, 500);
 }
 

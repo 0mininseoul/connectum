@@ -9,9 +9,28 @@ export function emptyBrief(): BriefSections {
 }
 
 function extractJSON(text: string): Record<string, unknown> {
-  const m = text.match(/\{[\s\S]*\}/);
-  if (!m) throw new Error("Claude가 JSON을 반환하지 않았습니다: " + text.slice(0, 200));
-  return JSON.parse(m[0]);
+  // Scan for the first *balanced* {...} object, tracking string state so braces
+  // inside strings don't miscount. A greedy first-`{`-to-last-`}` regex breaks on
+  // prose containing multiple objects (it spans across them) and on output
+  // truncated mid-object by max_tokens (it grabs a stray inner `}`).
+  const t = text.replace(/```(?:json)?/gi, "");
+  const start = t.indexOf("{");
+  if (start === -1) throw new Error("Claude가 JSON을 반환하지 않았습니다: " + text.slice(0, 200));
+  let depth = 0, inStr = false, esc = false;
+  for (let i = start; i < t.length; i++) {
+    const ch = t[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (ch === "\\") esc = true;
+      else if (ch === '"') inStr = false;
+    } else if (ch === '"') inStr = true;
+    else if (ch === "{") depth++;
+    else if (ch === "}") {
+      depth--;
+      if (depth === 0) return JSON.parse(t.slice(start, i + 1));
+    }
+  }
+  throw new Error("Claude JSON이 잘렸거나 불완전합니다(max_tokens?): " + text.slice(0, 200));
 }
 
 export function parseSectionsJSON(text: string): BriefSections {
@@ -33,8 +52,12 @@ export interface InterviewStep { question?: string; options?: string[]; done?: b
 export function parseInterviewJSON(text: string): InterviewStep {
   const raw = extractJSON(text) as InterviewStep;
   if (raw.done === true) return { done: true };
+  const question = typeof raw.question === "string" ? raw.question.trim() : "";
+  // Off-spec output (neither done nor a real question) → end the interview rather
+  // than handing the client a blank prompt that would stall the conversation.
+  if (!question) return { done: true };
   return {
-    question: typeof raw.question === "string" ? raw.question : "",
+    question,
     options: Array.isArray(raw.options) ? raw.options.filter((o) => typeof o === "string") : undefined,
   };
 }

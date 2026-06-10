@@ -8,9 +8,13 @@ export interface Signals {
 }
 
 export async function gatherSignals(db: any, serviceId: string): Promise<Signals> {
-  const { data: svc } = await db.from("service")
+  const { data: svc, error: svcErr } = await db.from("service")
     .select("name,supabase_project_name,supabase_account_id,amplitude_account_id,axiom_account_id")
     .eq("id", serviceId).maybeSingle();
+  if (svcErr) throw new Error("service_lookup_failed: " + svcErr.message);
+  // Fail fast before spending a Claude completion on a bogus id (the later
+  // service_brief upsert would otherwise FK-reject with a confusing 500).
+  if (!svc) throw new Error("service_not_found");
   const { data: st } = await db.from("service_table")
     .select("column_map,display_columns,role").eq("service_id", serviceId).eq("role", "user_table").limit(1);
   const userTable = (st ?? [])[0] ?? {};
