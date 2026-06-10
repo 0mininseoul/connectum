@@ -1,12 +1,9 @@
 import { corsHeaders } from "../_shared/cors.ts";
 import { adminClient } from "../_shared/admin.ts";
 import { claudeEnv } from "../_shared/claude_env.ts";
-import { tokenForClaudeAccount } from "../_shared/claude_token.ts";
+import { CLAUDE_CODE_IDENTITY, claudeHeaders } from "../_shared/claude_chat.ts";
 import { runTool, TOOL_DEFS } from "./tools.ts";
 
-// The OAuth subscription token is only accepted when the system prompt's first
-// block is the Claude Code identity. Real instructions follow in block 2.
-const CLAUDE_CODE_IDENTITY = "You are Claude Code, Anthropic's official CLI for Claude.";
 const MAX_ROUNDS = 8;
 
 // deno-lint-ignore no-explicit-any
@@ -14,27 +11,8 @@ function sse(controller: ReadableStreamDefaultController, event: string, data: a
   controller.enqueue(new TextEncoder().encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
 }
 
-async function claudeHeaders(): Promise<Record<string, string>> {
-  const apiKey = claudeEnv.apiKey();
-  if (apiKey) {
-    // Official API-key fallback (kept for when the OAuth path breaks).
-    return {
-      "Content-Type": "application/json",
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
-    };
-  }
-  const token = await tokenForClaudeAccount();
-  return {
-    "Content-Type": "application/json",
-    "Authorization": `Bearer ${token}`,
-    "anthropic-version": "2023-06-01",
-    "anthropic-beta": claudeEnv.oauthBeta(),
-  };
-}
-
-function systemPrompt(serviceContext: string): unknown[] {
-  return [
+function systemPrompt(serviceContext: string, brief: string): unknown[] {
+  const blocks: unknown[] = [
     { type: "text", text: CLAUDE_CODE_IDENTITY },
     {
       type: "text",
@@ -45,6 +23,14 @@ function systemPrompt(serviceContext: string): unknown[] {
       cache_control: { type: "ephemeral" },
     },
   ];
+  if (brief) {
+    blocks.push({
+      type: "text",
+      text: "Service brief (what this service is — use it to interpret the data and prioritize):\n" + brief,
+      cache_control: { type: "ephemeral" },
+    });
+  }
+  return blocks;
 }
 
 async function handle(req: Request): Promise<Response> {
@@ -64,7 +50,13 @@ async function handle(req: Request): Promise<Response> {
     async start(controller) {
       try {
         const overview = await runTool(db, serviceId, "get_service_overview", {});
-        const system = systemPrompt(overview);
+        const { data: briefRow } = await db.from("service_brief")
+          .select("sections,status").eq("service_id", serviceId).maybeSingle();
+        const briefText = briefRow?.status === "ready"
+          ? Object.entries(briefRow.sections as Record<string, string>)
+            .filter(([, v]) => (v ?? "").trim()).map(([k, v]) => `[${k}] ${v}`).join("\n")
+          : "";
+        const system = systemPrompt(overview, briefText);
         // deno-lint-ignore no-explicit-any
         const messages: any[] = [...userMessages];
         const headers = await claudeHeaders();

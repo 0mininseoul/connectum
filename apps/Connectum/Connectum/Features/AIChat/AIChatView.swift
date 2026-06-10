@@ -6,6 +6,8 @@ struct AIChatView: View {
     var isVisible: Bool = true
     @FocusState private var inputFocused: Bool
     @State private var focusTask: Task<Void, Never>?
+    @State private var showBrief = false
+    @State private var briefEmpty = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -14,12 +16,17 @@ struct AIChatView: View {
             if !vm.connected {
                 notConnected
             } else {
+                if briefEmpty { briefBanner }
                 messagesList
                 if let s = vm.statusText { statusChip(s) }
                 inputBar
             }
         }
         .background(Palette.canvas)
+        .sheet(isPresented: $showBrief, onDismiss: { Task { await refreshBriefState() } }) {
+            if let sid = serviceId { ServiceBriefView(serviceId: sid) }
+        }
+        .task(id: serviceId) { await refreshBriefState() }
         .task {
             await vm.bind(serviceId: serviceId)
         }
@@ -58,6 +65,33 @@ struct AIChatView: View {
                 .font(Typography.caption).foregroundStyle(Palette.muted)
         }
         .padding(Spacing.md)
+    }
+
+    // Nudge shown when this service has no brief yet: the assistant only knows the
+    // raw data, not what the service is. Opens the brief editor.
+    private var briefBanner: some View {
+        Button { showBrief = true } label: {
+            HStack(spacing: Spacing.xs) {
+                Image(systemName: "lightbulb")
+                Text("AI가 이 서비스를 더 잘 이해하게 하기")
+                    .font(Typography.caption)
+                Spacer()
+                Image(systemName: "chevron.right").font(Typography.caption)
+            }
+            .foregroundStyle(Palette.accentBlue)
+            .padding(.horizontal, Spacing.md).padding(.vertical, Spacing.sm)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Palette.accentBlue.opacity(0.10))
+            .clipShape(RoundedRectangle(cornerRadius: Radius.button))
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, Spacing.md).padding(.top, Spacing.sm)
+    }
+
+    private func refreshBriefState() async {
+        guard let sid = serviceId else { briefEmpty = false; return }
+        let brief = try? await CrmRepository().fetchServiceBrief(serviceId: sid)
+        briefEmpty = brief?.isEmpty ?? true
     }
 
     private var messagesList: some View {

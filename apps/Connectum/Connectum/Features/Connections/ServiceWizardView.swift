@@ -24,6 +24,7 @@ final class ServiceWizardViewModel {
     var axiomDataset: String?
     var status: String?
     var isBusy = false
+    var createdServiceId: String?
     var needsSupabaseReauthorization = false
     private let repo: CrmDataProviding
     init(repo: CrmDataProviding = CrmRepository()) { self.repo = repo }
@@ -216,7 +217,7 @@ final class ServiceWizardViewModel {
         }
         do {
             let createdName = name
-            try await repo.createService(
+            createdServiceId = try await repo.createService(
                 name: name,
                 supabaseAccountId: a,
                 projectRef: p,
@@ -351,6 +352,9 @@ struct ServiceWizardView: View {
     @State private var vm = ServiceWizardViewModel()
     @State private var showDisplayColumnOptions = false
     @State private var showIdentityColumnOptions = false
+    @State private var briefTarget: BriefTarget?
+
+    private struct BriefTarget: Identifiable { let id: String }
 
     init(
         draftService: Service? = nil,
@@ -379,6 +383,9 @@ struct ServiceWizardView: View {
         }
         .onChange(of: draftService?.id) { _, _ in
             vm.applyDraft(draftService)
+        }
+        .sheet(item: $briefTarget) { target in
+            ServiceBriefView(serviceId: target.id)
         }
     }
 
@@ -557,7 +564,9 @@ struct ServiceWizardView: View {
             ) {
                 Task {
                     if let createdName = await vm.create() {
+                        let newId = vm.createdServiceId
                         await onCreated(createdName)
+                        if let newId { briefTarget = BriefTarget(id: newId) }
                     }
                 }
             }
