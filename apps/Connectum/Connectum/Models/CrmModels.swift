@@ -269,6 +269,46 @@ struct ServiceTableSpec: Hashable {
     var displayColumns: [String] = []   // columns to show in the operational-DB table
 }
 
+// A row of `service_table` — which source tables this service imports.
+struct ServiceTableInfo: Codable, Identifiable, Hashable, Sendable {
+    let id: String
+    let sourceSchema: String
+    let sourceTable: String
+    let role: String   // "user_table" | "related"
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case sourceSchema = "source_schema"
+        case sourceTable = "source_table"
+        case role
+    }
+
+    var isUserTable: Bool { role == "user_table" }
+    var displayName: String { sourceSchema == "public" ? sourceTable : "\(sourceSchema).\(sourceTable)" }
+}
+
+// A synced row from a `related` source table (stored as JSONB in `mirrored_row`).
+struct MirroredRow: Codable, Identifiable, Hashable, Sendable {
+    let id: String
+    let sourcePk: String
+    let data: [String: JSONScalar]
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case sourcePk = "source_pk"
+        case data
+    }
+
+    // Decode `data` defensively: a NULL/absent jsonb payload must not fail the
+    // whole fetch (one bad row would blank the entire table).
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        sourcePk = try c.decode(String.self, forKey: .sourcePk)
+        data = (try? c.decode([String: JSONScalar].self, forKey: .data)) ?? [:]
+    }
+}
+
 // Latest distributable build advertised to the app for the update check.
 struct AppRelease: Codable, Hashable {
     let version: String

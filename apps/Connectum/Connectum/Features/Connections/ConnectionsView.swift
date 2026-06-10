@@ -36,6 +36,24 @@ enum ConnectionProvider: String, CaseIterable, Identifiable {
         case .axiom: return "로그/히스토리"
         }
     }
+    var brandColor: Color {
+        switch self {
+        case .supabase: return Color(hex: "3ECF8E")  // Supabase green
+        case .amplitude: return Color(hex: "2E6DF6") // Amplitude blue
+        case .axiom: return Color(hex: "8A63D2")     // Axiom indigo
+        }
+    }
+    var logoAsset: String {
+        switch self {
+        case .supabase: return "SupabaseLogo"
+        case .amplitude: return "AmplitudeLogo"
+        case .axiom: return "AxiomLogo"
+        }
+    }
+    // All three marks are single-path monochrome SVGs rendered as tintable
+    // templates (full-color/gradient SVGs don't render in the asset catalog, and
+    // a dark navy fill is invisible on the dark chips). Tinted to the brand color.
+    var logoIsTemplate: Bool { true }
 }
 
 private struct ConnectedAccountDeletion: Identifiable {
@@ -261,6 +279,40 @@ final class ConnectionsViewModel {
         } catch { status = "Axiom 연결 실패: \(error)" }
     }
 
+    // Connect a provider AND attach it to an existing service (sync requires the
+    // service to reference the account). Returns true on success.
+    func connectAmplitudeForService(_ service: Service, projectName: String, key: String, secret: String, region: String) async -> Bool {
+        isBusy = true; defer { isBusy = false }
+        do {
+            let before = Set(amplitude.map(\.id))
+            try await repo.connectAmplitude(projectName: projectName, apiKey: key, secretKey: secret, region: region.isEmpty ? "us" : region)
+            amplitude = try await repo.fetchAmplitudeAccounts()
+            guard let acc = amplitude.first(where: { !before.contains($0.id) }) ?? amplitude.last else {
+                status = "Amplitude 계정을 찾지 못했습니다"; return false
+            }
+            try await repo.updateServiceAmplitudeAccount(serviceId: service.id, accountId: acc.id)
+            status = "Amplitude 연결됨"
+            await load()
+            return true
+        } catch { status = "Amplitude 연결 실패: \(error)"; return false }
+    }
+
+    func connectAxiomForService(_ service: Service, token: String) async -> Bool {
+        isBusy = true; defer { isBusy = false }
+        do {
+            let before = Set(axiom.map(\.id))
+            let datasets = try await repo.connectAxiom(token: token)
+            axiom = try await repo.fetchAxiomAccounts()
+            guard let acc = axiom.first(where: { !before.contains($0.id) }) ?? axiom.last else {
+                status = "Axiom 계정을 찾지 못했습니다"; return false
+            }
+            try await repo.updateServiceAxiomAccount(serviceId: service.id, accountId: acc.id, dataset: datasets.first)
+            status = "Axiom 연결됨 (데이터셋 \(datasets.count)개)"
+            await load()
+            return true
+        } catch { status = "Axiom 연결 실패: \(error)"; return false }
+    }
+
     func deleteService(_ service: Service) async -> Bool {
         guard !service.isDraft else { return false }
         isBusy = true; defer { isBusy = false }
@@ -370,6 +422,7 @@ struct ConnectionsView: View {
     @State private var servicePendingDeletion: Service?
     @State private var accountPendingDeletion: ConnectedAccountDeletion?
     @State private var deleteConfirmationName = ""
+    @State private var showTableEditor = false
 
     init(
         selectedService: Service? = nil,
@@ -389,10 +442,16 @@ struct ConnectionsView: View {
                 header
                 setupContent
                 ClaudeConnectCard(vm: vm)
-                    .frame(maxWidth: 760, alignment: .leading)
+                if let service = selectedService, !service.isDraft {
+                    ServiceDangerZone(service: service, isBusy: vm.isBusy) {
+                        deleteConfirmationName = ""
+                        servicePendingDeletion = service
+                    }
+                }
             }
+            .frame(maxWidth: 720, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .center)
             .padding(Spacing.xl)
-            .frame(maxWidth: 1280, alignment: .leading)
         }
         .scrollContentBackground(.hidden)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -443,6 +502,13 @@ struct ConnectionsView: View {
         } message: {
             if let deletion = accountPendingDeletion {
                 Text("'\(deletion.account.label)' \(deletion.provider.displayTitle) 계정을 삭제합니다. 이 계정을 쓰는 서비스는 해당 데이터 원본 연결이 끊기며, 다시 연결하기 전까지 동기화할 수 없습니다.")
+            }
+        }
+        .sheet(isPresented: $showTableEditor) {
+            if let service = selectedService, !service.isDraft {
+                ImportedTablesEditor(service: service) {
+                    Task { await onServiceUpdated() }
+                }
             }
         }
         .task {
@@ -521,71 +587,26 @@ struct ConnectionsView: View {
                 .controlSize(.small)
                 .frame(maxWidth: .infinity, minHeight: 200, alignment: .center)
         } else if requiresSupabaseRepair(service) {
-            VStack(alignment: .leading, spacing: Spacing.lg) {
-                SupabaseRepairPanel(service: service, isBusy: vm.isBusy) {
-                    Task {
-                        if await vm.repairSupabaseConnection(for: service) {
-                            await onServiceUpdated()
-                        }
+            SupabaseRepairPanel(service: service, isBusy: vm.isBusy) {
+                Task {
+                    if await vm.repairSupabaseConnection(for: service) {
+                        await onServiceUpdated()
                     }
                 }
-                .frame(maxWidth: 760, alignment: .leading)
-
-                ServiceDangerZone(service: service, isBusy: vm.isBusy) {
-                    deleteConfirmationName = ""
-                    servicePendingDeletion = service
-                }
-                .frame(maxWidth: 420, alignment: .leading)
             }
         } else {
-            ViewThatFits(in: .horizontal) {
-                HStack(alignment: .top, spacing: Spacing.lg) {
-                    connectedAccountsPanel(service)
-                        .frame(minWidth: 420, maxWidth: 620, alignment: .topLeading)
-                    connectionActionColumn(service)
-                        .frame(minWidth: 320, maxWidth: 420, alignment: .topLeading)
-                    Spacer(minLength: 0)
-                }
-
-                VStack(alignment: .leading, spacing: Spacing.lg) {
-                    connectedAccountsPanel(service)
-                        .frame(maxWidth: 620, alignment: .topLeading)
-                    connectionActionColumn(service)
-                        .frame(maxWidth: 420, alignment: .topLeading)
-                }
-            }
+            connectedAccountsPanel(service)
         }
     }
 
     private func connectedAccountsPanel(_ service: Service) -> some View {
-        ConnectedAccountsPanel(selectedService: service, vm: vm) { deletion in
-            accountPendingDeletion = deletion
-        }
-    }
-
-    private func connectionActionColumn(_ service: Service) -> some View {
-        VStack(spacing: Spacing.md) {
-            let optionalProviders = availableOptionalProviders(for: service)
-            if !optionalProviders.isEmpty {
-                AccountConnectionPanel(
-                    vm: vm,
-                    provider: $provider,
-                    availableProviders: optionalProviders,
-                    title: "선택 연동 추가",
-                    sbPat: $sbPat,
-                    sbLabel: $sbLabel,
-                    amKey: $amKey,
-                    amSecret: $amSecret,
-                    amProjectName: $amProjectName,
-                    amRegion: $amRegion,
-                    axToken: $axToken
-                )
-            }
-            ServiceDangerZone(service: service, isBusy: vm.isBusy) {
-                deleteConfirmationName = ""
-                servicePendingDeletion = service
-            }
-        }
+        ConnectedAccountsPanel(
+            selectedService: service,
+            vm: vm,
+            onDelete: { deletion in accountPendingDeletion = deletion },
+            onEditTables: { showTableEditor = true },
+            onServiceUpdated: onServiceUpdated
+        )
     }
 
     private func requiresSupabaseRepair(_ service: Service) -> Bool {
@@ -716,39 +737,30 @@ private struct SetupGuidePanel: View {
     }
 }
 
+// Deliberately understated — a quiet footer action, not a loud red card.
 private struct ServiceDangerZone: View {
     let service: Service
     let isBusy: Bool
     let onDelete: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Spacing.md) {
-            HStack(spacing: Spacing.sm) {
-                Image(systemName: "exclamationmark.triangle")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(Palette.accentRed)
-                Text("Danger Zone")
-                    .font(Typography.body)
-                    .foregroundStyle(Palette.ink)
-            }
-            Text(service.name)
+        HStack(spacing: Spacing.sm) {
+            Text("이 서비스가 더 필요 없나요?")
                 .font(Typography.caption)
                 .foregroundStyle(Palette.muted)
-                .lineLimit(1)
+            Spacer()
             Button(action: onDelete) {
                 Label("서비스 삭제", systemImage: "trash")
                     .font(Typography.caption)
                     .foregroundStyle(Palette.accentRed)
-                    .frame(height: 30)
             }
             .buttonStyle(.plain)
             .disabled(isBusy)
         }
-        .padding(Spacing.lg)
+        .padding(.horizontal, Spacing.sm)
+        .padding(.top, Spacing.md)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Palette.surfaceCard)
-        .clipShape(RoundedRectangle(cornerRadius: Radius.card))
-        .overlay(RoundedRectangle(cornerRadius: Radius.card).stroke(Palette.accentRed.opacity(0.45)))
+        .overlay(alignment: .top) { Divider().overlay(Palette.hairline) }
     }
 }
 
@@ -818,6 +830,16 @@ private struct ConnectedAccountsPanel: View {
     let selectedService: Service?
     @Bindable var vm: ConnectionsViewModel
     let onDelete: (ConnectedAccountDeletion) -> Void
+    var onEditTables: () -> Void = {}
+    var onServiceUpdated: () async -> Void = {}
+
+    // Inline "add" form state (Amplitude/Axiom expand within their own row).
+    @State private var expanded: ConnectionProvider?
+    @State private var amProjectName = ""
+    @State private var amKey = ""
+    @State private var amSecret = ""
+    @State private var amRegion = "us"
+    @State private var axToken = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: Spacing.md) {
@@ -839,12 +861,12 @@ private struct ConnectedAccountsPanel: View {
         let missingRequiredSource = isMissingRequiredSource(provider)
         let missingReferencedAccount = hasMissingReferencedAccount(provider: provider, accounts: accounts)
         let isMissing = missingRequiredSource || missingReferencedAccount
+        let tint = isMissing ? Palette.accentYellow : provider.brandColor
         return VStack(alignment: .leading, spacing: Spacing.sm) {
-            HStack(spacing: Spacing.sm) {
-                Image(systemName: provider.icon)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(isMissing ? Palette.accentYellow : Palette.accentBlue)
-                    .frame(width: 18)
+            HStack(spacing: Spacing.md) {
+                IconChip(tint: tint, size: 30) {
+                    ProviderLogo(assetName: provider.logoAsset, isTemplate: provider.logoIsTemplate, size: 17, tint: tint)
+                }
                 VStack(alignment: .leading, spacing: 2) {
                     Text(provider.displayTitle)
                         .font(Typography.caption)
@@ -854,9 +876,7 @@ private struct ConnectedAccountsPanel: View {
                         .foregroundStyle(Palette.muted)
                 }
                 Spacer()
-                Text(groupStatusText(accounts: accounts, isMissing: isMissing))
-                    .font(Typography.caption)
-                    .foregroundStyle(isMissing ? Palette.accentYellow : (accounts.isEmpty ? Palette.ash : Palette.accentGreen))
+                trailingControl(provider, accounts: accounts, isMissing: isMissing)
             }
             if isMissing {
                 HStack(spacing: Spacing.sm) {
@@ -873,7 +893,12 @@ private struct ConnectedAccountsPanel: View {
                     }
                     Spacer(minLength: Spacing.sm)
                 }
-                .padding(.leading, 26)
+                .padding(.leading, 42)
+            }
+            if expanded == provider {
+                inlineAddForm(provider)
+                    .padding(.leading, 42)
+                    .padding(.top, Spacing.xxs)
             }
             ForEach(accounts) { account in
                 HStack(spacing: Spacing.sm) {
@@ -901,7 +926,7 @@ private struct ConnectedAccountsPanel: View {
                     .disabled(vm.isBusy)
                     .help("\(provider.displayTitle) 계정 삭제")
                 }
-                .padding(.leading, 26)
+                .padding(.leading, 42)
             }
         }
         .padding(.vertical, Spacing.sm)
@@ -910,9 +935,122 @@ private struct ConnectedAccountsPanel: View {
         }
     }
 
-    private func groupStatusText(accounts: [ConnAccount], isMissing: Bool) -> String {
-        if isMissing { return "복구 필요" }
-        return accounts.isEmpty ? "없음" : "\(accounts.count)"
+    // Right-aligned control per provider row: status pill, a Supabase "테이블"
+    // button, an "추가" toggle for connectable providers, or a muted "없음".
+    @ViewBuilder private func trailingControl(_ provider: ConnectionProvider, accounts: [ConnAccount], isMissing: Bool) -> some View {
+        if isMissing {
+            StatusPill(text: "복구 필요", color: Palette.accentYellow)
+        } else if provider == .supabase, !accounts.isEmpty {
+            HStack(spacing: Spacing.xs) {
+                StatusPill(text: "연결됨", color: Palette.accentGreen)
+                pillButton(icon: "tablecells.badge.ellipsis", title: "테이블") { onEditTables() }
+            }
+        } else if !accounts.isEmpty {
+            StatusPill(text: "연결됨", color: Palette.accentGreen)
+        } else if addable(provider) {
+            pillButton(icon: expanded == provider ? "chevron.up" : "plus",
+                       title: expanded == provider ? "닫기" : "추가") {
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    expanded = (expanded == provider) ? nil : provider
+                }
+            }
+        } else {
+            Text("없음")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(Palette.ash)
+                .padding(.horizontal, Spacing.sm)
+                .padding(.vertical, 3)
+                .background(Palette.ash.opacity(0.10), in: Capsule())
+        }
+    }
+
+    private func pillButton(icon: String, title: String, _ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: Spacing.xxs + 2) {
+                Image(systemName: icon).font(.system(size: 10, weight: .semibold))
+                Text(title).font(.system(size: 11, weight: .medium))
+            }
+            .foregroundStyle(Palette.accentBlue)
+            .padding(.horizontal, Spacing.sm).padding(.vertical, 3)
+            .background(Palette.accentBlue.opacity(0.10), in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .disabled(vm.isBusy)
+    }
+
+    private func addable(_ provider: ConnectionProvider) -> Bool {
+        guard let s = selectedService, !s.isDraft else { return false }
+        switch provider {
+        case .supabase: return false
+        case .amplitude: return s.amplitudeAccountId == nil && vm.amplitude.isEmpty
+        case .axiom: return s.axiomAccountId == nil && vm.axiom.isEmpty
+        }
+    }
+
+    // Compact connect form revealed under an Amplitude/Axiom row. On success the
+    // account is created AND attached to the service, then the service re-syncs.
+    @ViewBuilder private func inlineAddForm(_ provider: ConnectionProvider) -> some View {
+        VStack(alignment: .leading, spacing: Spacing.sm) {
+            switch provider {
+            case .amplitude:
+                Text("Export API 자격증명으로 연결합니다. 프로젝트 이름은 표시용입니다.")
+                    .font(.system(size: 11)).foregroundStyle(Palette.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+                field("프로젝트 이름", text: $amProjectName)
+                field("API Key", text: $amKey)
+                field("Secret Key", text: $amSecret, secure: true)
+                Picker("", selection: $amRegion) { Text("US").tag("us"); Text("EU").tag("eu") }
+                    .pickerStyle(.segmented).labelsHidden().frame(width: 120)
+                connectButton(enabled: !amProjectName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !amKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !amSecret.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) {
+                    guard let s = selectedService else { return }
+                    if await vm.connectAmplitudeForService(s, projectName: amProjectName, key: amKey, secret: amSecret, region: amRegion) {
+                        amProjectName = ""; amKey = ""; amSecret = ""; expanded = nil
+                        await onServiceUpdated()
+                    }
+                }
+            case .axiom:
+                Text("Axiom API Token 또는 PAT로 데이터셋을 연결합니다.")
+                    .font(.system(size: 11)).foregroundStyle(Palette.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+                field("API Token 또는 PAT", text: $axToken, secure: true)
+                connectButton(enabled: !axToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) {
+                    guard let s = selectedService else { return }
+                    if await vm.connectAxiomForService(s, token: axToken) {
+                        axToken = ""; expanded = nil
+                        await onServiceUpdated()
+                    }
+                }
+            case .supabase:
+                EmptyView()
+            }
+        }
+        .padding(.trailing, Spacing.sm)
+    }
+
+    @ViewBuilder private func field(_ title: String, text: Binding<String>, secure: Bool = false) -> some View {
+        Group {
+            if secure { SecureField(title, text: text) } else { TextField(title, text: text) }
+        }
+        .textFieldStyle(.plain)
+        .font(Typography.caption)
+        .foregroundStyle(Palette.ink)
+        .padding(.horizontal, Spacing.sm)
+        .frame(height: 30)
+        .background(Palette.surfaceElevated)
+        .clipShape(RoundedRectangle(cornerRadius: Radius.button))
+        .overlay(RoundedRectangle(cornerRadius: Radius.button).stroke(Palette.hairline))
+    }
+
+    private func connectButton(enabled: Bool, _ action: @escaping () async -> Void) -> some View {
+        Button { Task { await action() } } label: {
+            Text(vm.isBusy ? "연결 중…" : "연결")
+                .font(Typography.caption).foregroundStyle(Palette.ctaText)
+                .padding(.horizontal, Spacing.md).frame(height: 30)
+                .background(Palette.ctaFill)
+                .clipShape(RoundedRectangle(cornerRadius: Radius.button))
+        }
+        .buttonStyle(.plain)
+        .disabled(vm.isBusy || !enabled)
     }
 
     private func isMissingRequiredSource(_ provider: ConnectionProvider) -> Bool {
@@ -1014,12 +1152,10 @@ private struct ClaudeConnectCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Spacing.md) {
-            HStack(spacing: Spacing.sm) {
-                Image(systemName: "sparkles")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(Palette.accentBlue)
+            HStack(spacing: Spacing.md) {
+                IconChip(tint: Palette.claude, size: 38) { ClaudeMark(size: 20) }
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Claude (AI)")
+                    Text("Claude")
                         .font(Typography.body)
                         .foregroundStyle(Palette.ink)
                     Text("AI 채팅 (⌘I) · 워크스페이스 전역")
@@ -1028,10 +1164,7 @@ private struct ClaudeConnectCard: View {
                 }
                 Spacer()
                 if vm.claude != nil {
-                    HStack(spacing: Spacing.xs) {
-                        Circle().fill(Palette.accentGreen).frame(width: 7, height: 7)
-                        Text("연결됨").font(Typography.caption).foregroundStyle(Palette.accentGreen)
-                    }
+                    StatusPill(text: "연결됨", color: Palette.accentGreen)
                 }
             }
 

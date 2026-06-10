@@ -32,13 +32,16 @@ export async function tokenForClaudeAccount(): Promise<string> {
   // a manual reconnect. Serialize: claim refresh_lock_at with an atomic
   // conditional UPDATE (Postgres row-locks it, so exactly one caller wins).
   const staleIso = new Date(Date.now() - 30_000).toISOString();
-  const { data: claimed } = await db.from("ai_account")
+  const { data: claimed, error: claimErr } = await db.from("ai_account")
     .update({ refresh_lock_at: new Date().toISOString() })
     .eq("id", row.id)
     .or(`refresh_lock_at.is.null,refresh_lock_at.lt.${staleIso}`)
     .select("id");
 
-  if (!claimed?.length) {
+  // Only wait if we definitively LOST the claim. A transient error on the claim
+  // statement means we can't coordinate — fall through and refresh ourselves
+  // rather than poll and return a stale/expired token.
+  if (!claimErr && !claimed?.length) {
     // Another request holds the lock and is refreshing. Wait for it to store the
     // rotated token, then use that — never send the old refresh token ourselves.
     for (let i = 0; i < 12; i++) {

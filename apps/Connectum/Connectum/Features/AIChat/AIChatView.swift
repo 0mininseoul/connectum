@@ -58,9 +58,20 @@ struct AIChatView: View {
 
     private var header: some View {
         HStack(spacing: Spacing.sm) {
-            Image(systemName: "sparkles").foregroundStyle(Palette.accentBlue)
+            ClaudeMark(size: 17)
             Text("AI 채팅").font(Typography.cardTitle).foregroundStyle(Palette.ink)
             Spacer()
+            // Always-available entry to view/edit this service's brief — the empty
+            // banner disappears once filled, so this is how you reopen it later.
+            if serviceId != nil {
+                Button { showBrief = true } label: {
+                    Image(systemName: "doc.text.magnifyingglass")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(briefEmpty ? Palette.accentBlue : Palette.muted)
+                }
+                .buttonStyle(.plain)
+                .help("서비스 브리프 보기·수정")
+            }
             Label(serviceId == nil ? "서비스 없음" : "기준 서비스", systemImage: "cylinder.split.1x2")
                 .font(Typography.caption).foregroundStyle(Palette.muted)
         }
@@ -176,7 +187,7 @@ struct AIChatView: View {
 
     private var notConnected: some View {
         VStack(spacing: Spacing.md) {
-            Image(systemName: "sparkles").font(.system(size: 26)).foregroundStyle(Palette.accentBlue)
+            ClaudeMark(size: 30)
             Text("Claude 계정을 연결하세요").font(Typography.body).foregroundStyle(Palette.ink)
             Text("연동 탭에서 Claude(AI)를 연결하면 데이터에 대해 대화할 수 있어요.")
                 .font(Typography.caption).foregroundStyle(Palette.muted)

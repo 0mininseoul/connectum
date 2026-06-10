@@ -25,6 +25,8 @@ enum Palette {
     static let accentRed    = Color.adaptive(light: "D92D20", dark: "FF6161")
     static let accentGreen  = Color.adaptive(light: "168A53", dark: "59D499")
     static let accentYellow = Color.adaptive(light: "B7791F", dark: "FFC533")
+    // Third-party brand marks (used only for that provider's identity, not chrome).
+    static let claude       = Color(hex: "D97757")  // Claude terracotta
 }
 
 extension Color {
