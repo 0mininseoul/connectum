@@ -1,5 +1,7 @@
 # Connectum AI Chat — 설계 스펙
 
+> Historical note (2026-06-25): this spec predates the local-first AI implementation. Current product direction is Claude OAuth stored in Keychain and direct local-app calls to Claude. Do not use this file to add a Supabase Edge Function AI proxy, Supabase Vault token store, or API-key product flow unless the top-level product direction explicitly changes.
+
 - 작성일: 2026-06-09
 - 상태: 승인됨 (구현 진행)
 - 범위: Connectum macOS 앱에 데이터-그라운디드 AI Chat 추가 + Claude 구독 OAuth 우회 연동
