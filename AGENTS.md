@@ -90,5 +90,6 @@ xcodebuild test -project Connectum.xcodeproj -scheme Connectum -destination 'pla
 Build, install, and launch the local macOS app for QA:
 
 ```bash
+# from the repository root
 ./script/build_and_run.sh --install-verify
 ```

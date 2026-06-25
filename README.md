@@ -44,7 +44,7 @@ Run the `Connectum` scheme. The app opens directly into the local workspace. In 
 To build and replace the locally installed macOS app for QA:
 
 ```bash
-cd /path/to/connectum
+# from the repository root
 ./script/build_and_run.sh --install-verify
 ```
 
