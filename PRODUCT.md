@@ -2,7 +2,7 @@
 
 ## One-Line Definition
 
-Connectum is a native macOS CRM for the team to operate users across multiple services by syncing source data from Supabase, Amplitude, and Axiom into one service-scoped operational database.
+Connectum is a local-first native macOS CRM for teams to operate users from existing service data sources, starting with Supabase, in one service-scoped operational database.
 
 ## Register
 
@@ -15,9 +15,12 @@ Product UI. Design serves repeated operational work, not marketing. The interfac
 
 ## Product Principles
 
-- One service is one operational context. A service maps to one Supabase project, optional Amplitude analytics, and optional Axiom logs.
-- Connectum is read-heavy for source systems. Source credentials and ETL run through Supabase Edge Functions. The app edits only Connectum-owned operational data.
-- Connectum backend configuration is internal infrastructure. Backend URLs, anon keys, and local config paths must not appear in normal user-facing settings.
+- One service is one operational context. A service maps to an existing Supabase project and its selected source tables.
+- Connectum is read-heavy for source systems. Source credentials live in the user's Keychain, source rows are mirrored into local storage, and the app edits only Connectum-owned operational data.
+- Connectum must not require users to create a Supabase project for Connectum itself.
+- Connectum has no maintainer-hosted backend by default. Backend URLs, anon keys, and hosted deployment details must not appear in normal user-facing settings.
+- No in-app telemetry or usage log collection is enabled by default.
+- AI features must stay local-to-provider: Connectum may send selected local service context to the user's connected Claude account for a user-initiated AI request, but it must not send that context through maintainer infrastructure.
 - The operating surface should stay dense and keyboard-first. Prefer shortcuts, context menus, split views, tables, and popovers over large instructional screens.
 - Search, sorting, column visibility, row opening, exclusion, and sync should be available without moving through long forms.
 - Local cache is part of the product. Opening the app should show cached operational data quickly, then sync in the background.
@@ -26,19 +29,18 @@ Product UI. Design serves repeated operational work, not marketing. The interfac
 ## Core Workflows
 
 1. Connect data sources.
-   - Connect Supabase, Amplitude, and Axiom accounts once.
+   - Connect an existing Supabase account with a Personal Access Token.
    - Use connected accounts when creating services.
    - Do not ask for a provider connection again when a usable account already exists.
-   - Connected source rows show the resource first and the account second: Supabase project name, Amplitude project name, or Axiom dataset name above the account email/name.
+   - Connected source rows show the resource first and the account second: Supabase project name above the account label/name.
 
 2. Create a service.
-   - Choose an existing Supabase account.
+   - Choose an existing Supabase account connected by PAT.
    - Load projects.
    - Choose one project.
    - Pick source tables from a compact scrollable table selector.
    - Mark one selected table as the user table.
    - Choose user id, email, main, and display columns.
-   - Optionally attach Amplitude and Axiom accounts.
 
 3. Operate users.
    - Select rows with pointer or keyboard.
@@ -50,22 +52,23 @@ Product UI. Design serves repeated operational work, not marketing. The interfac
 4. Review a user.
    - Header shows the configured main column value first.
    - Tab switches between work and history immediately after the page opens.
-   - Work tab combines AI summary, records, notes, and profile context.
+   - Work tab combines records, notes, history, and profile context. AI-only content must stay hidden or disabled unless a supported AI provider is connected.
    - History tab captures dated evidence and screenshots.
 
 5. Manage the app.
-   - Settings expose login state, logout, theme, user page open mode, and UI scale.
-   - Settings do not expose Connectum backend connection details.
+   - Settings expose local storage/privacy status, theme, user page open mode, and UI scale.
+   - Settings do not expose hosted Connectum backend connection details.
    - Common commands appear in the macOS menu bar with visible shortcuts.
 
 ## Current Product Boundaries
 
 - macOS only.
-- Internal team tool.
+- Open-source local-first team tool.
 - No customer-facing surfaces.
 - No outbound marketing automation.
 - No source write-back.
-- No general observability replacement. Axiom is used only to enrich CRM context.
+- No maintainer access to user source rows, CRM notes, credentials, prompts, or usage logs by default.
+- AI chat requires the user to connect Claude with OAuth; Claude credentials stay in the user's Keychain. The product does not expose a user-pasted Anthropic API key flow.
 
 ## Tone
 

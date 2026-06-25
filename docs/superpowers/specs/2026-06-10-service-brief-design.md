@@ -1,5 +1,7 @@
 # 서비스 브리프 (Service Brief) — 설계 스펙
 
+> Historical note (2026-06-25): this spec predates the local-first AI implementation. Service brief UX concepts may still be useful, but any implementation must use the current local-first trust boundary in `AGENTS.md`: local storage, Keychain tokens, no maintainer-hosted AI proxy, and no default telemetry.
+
 작성일: 2026-06-10
 상태: 설계 확정, 구현 예정 (별도 브랜치)
 

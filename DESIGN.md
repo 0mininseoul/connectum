@@ -73,18 +73,22 @@ Color is functional. Do not use accent colors as decoration.
 ## Connections
 
 - Separate account management from service setup.
-- Connected source rows show the selected resource as the primary line: Supabase project name, Amplitude project name, or Axiom dataset name.
-- The secondary line shows the source account name or email.
+- Connected source rows show the selected resource as the primary line: Supabase project name for services and the account label/name for standalone source accounts.
+- The secondary line shows the source account name or label.
 - Do not repeat provider names under provider sections.
 - Do not show credential nicknames such as "PAT (dev)" in connected-source rows.
 - Account add forms appear only for providers that do not already have a connected account.
 - Service setup uses existing accounts. It should not look like the user is reconnecting the same provider.
+- Supabase connection uses a Personal Access Token stored in Keychain. Do not present hosted Connectum OAuth as a default path.
 - Supabase table selection is a compact dropdown/popover with scrolling checkboxes.
+- The AI provider card offers Claude OAuth and must clearly show connected/disconnected state. The copy should make the local-to-provider boundary clear: prompts go to Claude when AI is used, not to Connectum maintainer infrastructure.
 
 ## Settings
 
-- Settings are for user preferences and account state, not Connectum infrastructure.
-- Do not show backend URLs, anon keys, config paths, or internal deployment details.
+- Settings are for user preferences and local trust state, not hosted Connectum infrastructure.
+- Show the local workspace storage path and no-telemetry status.
+- If AI is connected, show it as a local credential/provider state, not as a Connectum backend account.
+- Do not show backend URLs, anon keys, hosted config paths, or internal deployment details.
 - The user detail open mode is labeled as "유저 페이지 열기 방식", not as a generic Operational DB preference.
 
 ## Shortcuts

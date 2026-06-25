@@ -1,5 +1,7 @@
 # Connectum — 기획/설계 문서 (Design Spec)
 
+> Historical note (2026-06-25): this spec predates the local-first/open-source pivot. Current product direction is documented in `AGENTS.md`, `CLAUDE.md`, `README.md`, `PRODUCT.md`, and `DESIGN.md`. Do not use this file to reintroduce a maintainer-hosted Supabase backend, required Connectum login, default telemetry, or Vertex/Edge-Function AI into the product.
+
 - **작성일**: 2026-06-07 (Mac 네이티브 피벗 반영 — 웹/PWA 안 대체)
 - **상태**: 설계 확정 (구현 계획 작성 대기)
 - **한 줄 정의**: 팀이 운영하는 여러 서비스별로, 가입 유저의 CRM 데이터를 자동 수집·병합하고 수동으로 운영(컨택/기록/메모)할 수 있는 **네이티브 macOS 앱** CRM 툴.
