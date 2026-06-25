@@ -1,6 +1,6 @@
 # Connectum
 
-Native macOS CRM for operating users from an existing Supabase service database. Connectum is now local-first for open-source distribution: Connectum-owned data stays on the user's Mac, provider credentials stay in Keychain, and the app does not require a Connectum-hosted backend or a Connectum-specific Supabase project.
+Native macOS CRM for operating users from an existing Supabase service database. Connectum's product direction is local-first for open-source distribution: Connectum-owned data stays on the user's Mac, provider credentials stay in Keychain, and the app should not require a Connectum-hosted backend or a Connectum-specific Supabase project.
 
 ## Trust Model
 
@@ -27,7 +27,7 @@ Users should not create a new Supabase project just to run Connectum.
 
 ## AI Agent Context
 
-Future Codex CLI and Claude Code sessions should read `AGENTS.md` and `CLAUDE.md` first. They document the current local-first/open-source trust boundary, the default local repository path, the Claude OAuth direction, and how to treat older hosted-backend design docs.
+Future Codex CLI and Claude Code sessions should read `AGENTS.md` and `CLAUDE.md` first. They document the local-first/open-source trust boundary, the intended local repository path, the Claude OAuth direction, and how to treat older hosted-backend design docs.
 
 Older files under `docs/superpowers/` may describe the pre-local-first architecture where Connectum used its own hosted Supabase backend. Treat those as historical unless a current top-level doc or current app code confirms the same direction.
 

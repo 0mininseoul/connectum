@@ -22,22 +22,24 @@ The core trust promise is simple: the Connectum maintainer must not receive, sto
 
 If a feature needs sync, analytics, release checks, crash reporting, or hosted collaboration, it must be explicit, opt-in, documented, and designed so the maintainer cannot silently inspect customer data.
 
-## Current Architecture
+## Architecture Direction
 
 - Main app: `apps/Connectum/`, native SwiftUI macOS.
-- Default repository: `typealias CrmRepository = LocalCrmRepository`.
-- Local state: `LocalConnectumStore`.
-- Secrets: `KeychainSecretStore`.
-- Source sync: direct Supabase Management API calls from the macOS app using the user's connected PAT by default. A user-owned OAuth token path may exist, but do not silently wire it to maintainer infrastructure or present hosted Connectum OAuth as the default source connection.
-- Legacy hosted implementation: `HostedSupabaseCrmRepository`.
+- The intended default repository path is local-first. When local-first code is present, `CrmRepository` should resolve to the local repository implementation rather than a maintainer-hosted backend.
+- Intended local state module: `LocalConnectumStore`.
+- Intended secrets module: `KeychainSecretStore`.
+- Intended source sync: direct Supabase Management API calls from the macOS app using the user's connected PAT by default. A user-owned OAuth token path may exist, but do not silently wire it to maintainer infrastructure or present hosted Connectum OAuth as the default source connection.
+- Hosted Supabase repository code may still exist while the migration is in progress. Treat it as legacy/reference unless the user explicitly asks for hosted deployment work.
 - Legacy backend files: `supabase/` and many older `docs/superpowers/*` specs/plans are retained for reference and prior deployments. Do not treat them as the default product architecture.
 - Bundled backend config: `apps/Connectum/Connectum/Resources/BackendConfig.json` must stay non-secret and must not point at a maintainer Supabase project.
+
+Before editing implementation, inspect the current branch. This repository may contain in-progress local-first work that is not yet merged everywhere, and older hosted-backend code may still be present.
 
 ## AI Provider Direction
 
 The product currently targets Claude OAuth, not API keys. The app does not support a user-pasted Anthropic API key flow.
 
-Current Claude path:
+Intended Claude path:
 
 - `ClaudeOAuthFlow` opens Anthropic/Claude OAuth with PKCE.
 - The user completes the browser flow and pastes the returned code into Connectum.

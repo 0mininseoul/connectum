@@ -6,7 +6,9 @@
 
 **Architecture:** The app stores Connectum-owned data in local files under Application Support and stores provider credentials in Keychain. Supabase remains only a source system: the app calls the Supabase Management API directly with a user-provided PAT by default and mirrors selected source rows into the local store. A user-owned OAuth token path may exist, but it must not be silently wired to maintainer infrastructure or presented as the default source connection. AI must not call maintainer-hosted Edge Functions.
 
-**Current-state note (2026-06-25):** the earlier "disable Claude subscription/OAuth" step below was superseded by the product decision to support Claude OAuth locally. Current code stores Claude OAuth tokens in Keychain and calls Claude directly from the macOS app. Do not add an Anthropic API-key product flow or a maintainer-hosted AI proxy unless the product direction explicitly changes.
+**Status note (2026-06-25):** the earlier "disable Claude subscription/OAuth" step below was superseded by the product decision to support Claude OAuth locally. The intended implementation stores Claude OAuth tokens in Keychain and calls Claude directly from the macOS app. Do not add an Anthropic API-key product flow or a maintainer-hosted AI proxy unless the product direction explicitly changes.
+
+This plan may be used alongside local in-progress implementation work. If this document is merged before all code changes land, treat checked items as local migration intent/status, not proof that the base branch already contains every referenced file.
 
 **Tech Stack:** SwiftUI macOS, Foundation URLSession, Security Keychain, local JSON persistence, existing Supabase Swift package retained for legacy code only.
 
