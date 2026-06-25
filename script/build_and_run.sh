@@ -15,7 +15,7 @@ DERIVED_DATA="$ROOT_DIR/.build/xcode"
 BUILT_APP="$DERIVED_DATA/Build/Products/$CONFIGURATION/${APP_NAME}.app"
 
 usage() {
-  echo "usage: $0 [run|--install|--verify|--debug|--logs|--telemetry]" >&2
+  echo "usage: $0 [run|--install|--verify|--debug|--logs|--telemetry|--install-verify]" >&2
 }
 
 stop_app() {
