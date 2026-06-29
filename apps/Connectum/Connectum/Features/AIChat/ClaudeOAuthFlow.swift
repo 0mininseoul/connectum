@@ -31,7 +31,7 @@ enum ClaudeOAuthFlow {
     // Claude's public client does NOT allow loopback redirects, so we use the
     // out-of-band console callback: after authorizing, the page shows a code
     // (often "code#state") the user pastes back into the app.
-    static let manualRedirectURI = "https://console.anthropic.com/oauth/code/callback"
+    static let manualRedirectURI = "https://platform.claude.com/oauth/code/callback"
 
     static var redirectURI: String { SupabaseOAuthFlow.redirectURI }
 

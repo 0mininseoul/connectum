@@ -39,7 +39,6 @@ enum AppTheme: String, CaseIterable, Identifiable {
 
 enum AppPreferenceKeys {
     static let userDetailOpenMode = "userDetailOpenMode"
-    static let uiScale = "uiScale"
 }
 
 enum UserDetailOpenMode: String, CaseIterable, Identifiable {
@@ -88,9 +87,6 @@ final class ShellModel {
     var syncingServiceIds = Set<String>()
     var syncRevision = 0
     var syncErrorMessage: String?
-    var uiScale: Double {
-        didSet { UserDefaults.standard.set(uiScale, forKey: AppPreferenceKeys.uiScale) }
-    }
     var theme: AppTheme {
         didSet { UserDefaults.standard.set(theme.rawValue, forKey: Self.themeDefaultsKey) }
     }
@@ -104,8 +100,6 @@ final class ShellModel {
         self.cache = cache
         let stored = UserDefaults.standard.string(forKey: Self.themeDefaultsKey)
         self.theme = AppTheme(rawValue: stored ?? "") ?? .dark
-        let storedScale = UserDefaults.standard.double(forKey: AppPreferenceKeys.uiScale)
-        self.uiScale = storedScale == 0 ? 1.0 : min(max(storedScale, 0.8), 1.4)
     }
 
     var selectedService: Service? {
@@ -193,6 +187,8 @@ final class ShellModel {
         do {
             try await repo.syncService(serviceId: service.id)
             syncRevision += 1
+        } catch CrmRepositoryError.supabaseReauthorizationRequired {
+            syncErrorMessage = "\(service.name): Supabase 연결이 만료됐습니다. 연동 탭에서 Supabase 계정을 삭제하고 다시 연결한 뒤 동기화하세요."
         } catch {
             syncErrorMessage = "동기화 실패: \(error)"
         }
@@ -211,15 +207,4 @@ final class ShellModel {
         theme = (theme == .dark) ? .light : .dark
     }
 
-    func zoomIn() {
-        uiScale = min(1.4, (uiScale * 10 + 1).rounded() / 10)
-    }
-
-    func zoomOut() {
-        uiScale = max(0.8, (uiScale * 10 - 1).rounded() / 10)
-    }
-
-    func resetZoom() {
-        uiScale = 1.0
-    }
 }

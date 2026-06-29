@@ -21,7 +21,7 @@ async function handle(req: Request): Promise<Response> {
         state,
         codeVerifier: code_verifier,
         clientId: claudeEnv.clientId(),
-        redirectUri: redirect_uri ?? "http://127.0.0.1:53682/callback",
+        redirectUri: redirect_uri ?? "https://platform.claude.com/oauth/code/callback",
       }),
     });
     if (!res.ok) {

@@ -4,7 +4,6 @@ import AppKit
 // Connectum settings (Cmd+,). Keep app-internal backend configuration out of
 // the user-facing preferences surface.
 struct SettingsView: View {
-    @State private var authVM = AuthViewModel()
     @State private var updater = UpdateChecker()
     @AppStorage(AppPreferenceKeys.userDetailOpenMode) private var userDetailOpenMode = UserDetailOpenMode.side.rawValue
 
@@ -13,32 +12,18 @@ struct SettingsView: View {
             Text("설정").font(Typography.cardTitle).foregroundStyle(Palette.ink)
 
             VStack(alignment: .leading, spacing: Spacing.sm) {
-                Text("로그인 정보").font(Typography.caption).foregroundStyle(Palette.muted)
-                HStack(spacing: Spacing.sm) {
-                    Image(systemName: "person.crop.circle")
-                        .font(.system(size: 18, weight: .regular))
-                        .foregroundStyle(Palette.muted)
-                    Text(authVM.currentUserEmail ?? "로그인 정보를 불러오지 못했습니다")
-                        .font(Typography.body)
-                        .foregroundStyle(authVM.currentUserEmail == nil ? Palette.muted : Palette.body)
-                        .lineLimit(1)
-                        .textSelection(.enabled)
-                    Spacer(minLength: Spacing.md)
-                    Button(role: .destructive) {
-                        Task { await authVM.signOut() }
-                    } label: {
-                        Label("로그아웃", systemImage: "rectangle.portrait.and.arrow.right")
-                            .font(Typography.caption)
-                            .foregroundStyle(Palette.accentRed)
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(authVM.isLoading)
-                }
-                if let error = authVM.errorMessage {
-                    Text(error)
-                        .font(Typography.caption)
-                        .foregroundStyle(Palette.accentRed)
-                }
+                Text("로컬 저장소").font(Typography.caption).foregroundStyle(Palette.muted)
+                Label("Connectum 데이터는 이 기기의 Application Support에 저장됩니다.", systemImage: "internaldrive")
+                    .font(Typography.body)
+                    .foregroundStyle(Palette.body)
+                Text(LocalConnectumStore.defaultURL().path)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(Palette.muted)
+                    .lineLimit(2)
+                    .textSelection(.enabled)
+                Label("기본 텔레메트리 없음 · 자격증명은 Keychain에 저장", systemImage: "lock.shield")
+                    .font(Typography.caption)
+                    .foregroundStyle(Palette.accentGreen)
             }
             .padding(Spacing.lg)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -86,11 +71,8 @@ struct SettingsView: View {
             Spacer()
         }
         .padding(Spacing.xl)
-        .frame(width: 520, height: 420)
+        .frame(width: 560, height: 430)
         .background(Palette.canvas)
-        .onAppear {
-            Task { await authVM.loadCurrentUserEmail() }
-        }
     }
 
     @ViewBuilder private var updateStatusRow: some View {

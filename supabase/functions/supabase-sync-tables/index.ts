@@ -1,12 +1,21 @@
 import { corsHeaders } from "../_shared/cors.ts";
 import { adminClient } from "../_shared/admin.ts";
-import { tokenForSupabaseAccount } from "../_shared/supabase_token.ts";
+import { isSupabaseReauthorizationError, tokenForSupabaseAccount } from "../_shared/supabase_token.ts";
 import { mgmtPost } from "../_shared/mgmt.ts";
 import { buildSelectSQL } from "../_shared/sql.ts";
 import { requireInternalRequest } from "../_shared/internal_auth.ts";
 import { filterExcludedCrmUsers, rowToCrmUser, rowToMirroredRow, maxCursor } from "./map.ts";
 
 const PAGE = 500;
+const REAUTHORIZE_MESSAGE = "Supabase 연결이 만료됐습니다. Supabase 계정을 다시 연결하세요.";
+
+function reauthorizationBody() {
+  return {
+    code: "supabase_reauthorization_required",
+    message: REAUTHORIZE_MESSAGE,
+    required_scope: "database:read",
+  };
+}
 
 async function handle(req: Request): Promise<Response> {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
@@ -74,8 +83,19 @@ async function handle(req: Request): Promise<Response> {
       status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (e) {
-    await db.from("sync_run").update({ status: "error", finished_at: new Date().toISOString(), error: String(e), stats }).eq("id", run!.id);
-    return new Response(JSON.stringify({ error: String(e) }), { status: 500, headers: corsHeaders });
+    const body = isSupabaseReauthorizationError(e)
+      ? reauthorizationBody()
+      : { error: String(e) };
+    await db.from("sync_run").update({
+      status: "error",
+      finished_at: new Date().toISOString(),
+      error: "message" in body ? body.message : body.error,
+      stats,
+    }).eq("id", run!.id);
+    return new Response(JSON.stringify(body), {
+      status: isSupabaseReauthorizationError(e) ? 401 : 500,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
   }
 }
 

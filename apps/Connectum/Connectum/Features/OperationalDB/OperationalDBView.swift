@@ -33,35 +33,46 @@ struct OperationalDBView: View {
     }
 
     var body: some View {
-        HStack(spacing: 0) {
-            VStack(spacing: 0) {
-                sourceTabs(vm)
-                if let related = vm.relatedTables.first(where: { $0.id == selectedSourceTableId }) {
-                    MirroredTableView(table: related, refreshID: refreshID)
-                } else {
-                    viewTabs(vm)
-                    Divider().overlay(Palette.hairline)
-                    controls(vm)
-                    Divider().overlay(Palette.hairline)
-                    table(vm)
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-            if detailOpenMode == .side, let sideUser {
-                ResizeHandle(width: sideDetailWidthBinding)
-                UserDetailView(
-                    user: sideUser,
-                    primaryTitle: vm.primaryText(sideUser),
-                    primaryLabel: vm.columnLabel(OperationalDBViewModel.primaryCol),
-                    onClose: {
-                        self.sideUser = nil
-                        tableFocused = true
+        GeometryReader { proxy in
+            HStack(spacing: 0) {
+                VStack(spacing: 0) {
+                    sourceTabs(vm)
+                    if let related = vm.relatedTables.first(where: { $0.id == selectedSourceTableId }) {
+                        MirroredTableView(table: related, refreshID: refreshID)
+                    } else {
+                        viewTabs(vm)
+                        Divider().overlay(Palette.hairline)
+                        controls(vm)
+                        Divider().overlay(Palette.hairline)
+                        table(vm)
                     }
-                )
-                .id(sideUser.id)
-                .frame(width: sideDetailWidth, height: nil)
-                .frame(minWidth: sideDetailMinWidth, maxHeight: .infinity)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .clipped()
+
+                if detailOpenMode == .side, let sideUser {
+                    ResizeHandle(
+                        width: sideDetailWidthBinding(availableWidth: proxy.size.width),
+                        onCommit: { width in
+                            commitSideDetailWidth(width, availableWidth: proxy.size.width)
+                        }
+                    )
+                    UserDetailView(
+                        user: sideUser,
+                        primaryTitle: vm.primaryText(sideUser),
+                        primaryLabel: vm.columnLabel(OperationalDBViewModel.primaryCol),
+                        onClose: {
+                            self.sideUser = nil
+                            self.sideDetailLiveWidth = nil
+                            tableFocused = true
+                        }
+                    )
+                    .id(sideUser.id)
+                    .frame(width: sideDetailWidth(availableWidth: proxy.size.width), height: nil)
+                    .frame(minWidth: sideDetailMinWidth, maxHeight: .infinity)
+                    .background(Palette.inspectorSurface)
+                    .zIndex(1)
+                }
             }
         }
         .background(Palette.canvas)
@@ -313,9 +324,9 @@ struct OperationalDBView: View {
                 ) { u in
                     interactiveCell(u) {
                         HStack(spacing: Spacing.sm) {
-                            Circle().fill(u.contactStatus == "contacted" ? Palette.accentGreen : Palette.ash)
+                            Circle().fill(statusDotColor(for: u))
                                 .frame(width: 7, height: 7)
-                            Text(vm.primaryText(u)).foregroundStyle(Palette.ink)
+                            Text(vm.primaryText(u)).foregroundStyle(primaryCellColor(for: u))
                         }
                     }
                 }
@@ -454,16 +465,36 @@ struct OperationalDBView: View {
     }
 
     @AppStorage("operationalDBSideDetailWidth") private var sideDetailWidthValue = 440.0
+    @State private var sideDetailLiveWidth: CGFloat?
     private let sideDetailMinWidth: CGFloat = 360
-    private let sideDetailMaxWidth: CGFloat = 760
-    private var sideDetailWidth: CGFloat {
-        min(max(CGFloat(sideDetailWidthValue), sideDetailMinWidth), sideDetailMaxWidth)
+    private let sideDetailPreferredMaxWidth: CGFloat = 760
+    private let sideDetailHandleWidth: CGFloat = 12
+    private let sideDetailTableMinWidth: CGFloat = 448
+    private let sideDetailTrailingProtection: CGFloat = 12
+    private func sideDetailMaxWidth(availableWidth: CGFloat) -> CGFloat {
+        let layoutMax = availableWidth - sideDetailTableMinWidth - sideDetailHandleWidth - sideDetailTrailingProtection
+        return max(sideDetailMinWidth, min(sideDetailPreferredMaxWidth, layoutMax))
     }
-    private var sideDetailWidthBinding: Binding<CGFloat> {
+    private func clampedSideDetailWidth(_ width: CGFloat, availableWidth: CGFloat) -> CGFloat {
+        min(max(width, sideDetailMinWidth), sideDetailMaxWidth(availableWidth: availableWidth))
+    }
+    private func sideDetailWidth(availableWidth: CGFloat) -> CGFloat {
+        clampedSideDetailWidth(sideDetailLiveWidth ?? CGFloat(sideDetailWidthValue), availableWidth: availableWidth)
+    }
+    private func sideDetailWidthBinding(availableWidth: CGFloat) -> Binding<CGFloat> {
         Binding(
-            get: { sideDetailWidth },
-            set: { sideDetailWidthValue = Double(min(max($0, sideDetailMinWidth), sideDetailMaxWidth)) }
+            get: { sideDetailWidth(availableWidth: availableWidth) },
+            set: { newValue in
+                let clamped = clampedSideDetailWidth(newValue, availableWidth: availableWidth)
+                guard abs((sideDetailLiveWidth ?? sideDetailWidth(availableWidth: availableWidth)) - clamped) > 0.25 else { return }
+                sideDetailLiveWidth = clamped
+            }
         )
+    }
+    private func commitSideDetailWidth(_ width: CGFloat, availableWidth: CGFloat) {
+        let clamped = clampedSideDetailWidth(width, availableWidth: availableWidth)
+        sideDetailWidthValue = Double(clamped)
+        sideDetailLiveWidth = nil
     }
 
     private func syncSortOrderFromConfig() {
@@ -515,18 +546,40 @@ struct OperationalDBView: View {
     @ViewBuilder private func cell(_ u: CrmUser, _ id: String) -> some View {
         switch id {
         case OperationalDBViewModel.emailCol:
-            Text(u.email ?? "—").lineLimit(1).foregroundStyle(Palette.muted)
+            Text(u.email ?? "—").lineLimit(1).foregroundStyle(secondaryCellColor(for: u))
         case OperationalDBViewModel.sourceUserIdCol:
-            Text(u.sourceUserId).lineLimit(1).foregroundStyle(Palette.muted)
+            Text(u.sourceUserId).lineLimit(1).foregroundStyle(secondaryCellColor(for: u))
         case OperationalDBViewModel.contactCol:
             Text(u.contactStatus == "contacted" ? "완료" : "—")
-                .foregroundStyle(u.contactStatus == "contacted" ? Palette.accentGreen : Palette.muted)
+                .foregroundStyle(contactCellColor(for: u))
         case OperationalDBViewModel.aiCol:
             Text((u.aiSummary ?? "—").replacingOccurrences(of: "\n", with: " "))
-                .lineLimit(1).foregroundStyle(Palette.muted)
+                .lineLimit(1).foregroundStyle(secondaryCellColor(for: u))
         default:
-            Text(u.profileValue(id)).lineLimit(1).foregroundStyle(Palette.muted)
+            Text(u.profileValue(id)).lineLimit(1).foregroundStyle(secondaryCellColor(for: u))
         }
+    }
+
+    private func isSelected(_ user: CrmUser) -> Bool {
+        selection == user.id
+    }
+
+    private func primaryCellColor(for user: CrmUser) -> Color {
+        isSelected(user) ? Color.white : Palette.ink
+    }
+
+    private func secondaryCellColor(for user: CrmUser) -> Color {
+        isSelected(user) ? Color.white.opacity(0.84) : Palette.muted
+    }
+
+    private func contactCellColor(for user: CrmUser) -> Color {
+        guard !isSelected(user) else { return Color.white.opacity(0.9) }
+        return user.contactStatus == "contacted" ? Palette.accentGreen : Palette.muted
+    }
+
+    private func statusDotColor(for user: CrmUser) -> Color {
+        guard !isSelected(user) else { return Color.white.opacity(0.82) }
+        return user.contactStatus == "contacted" ? Palette.accentGreen : Palette.ash
     }
 
     // MARK: Column width + customization persistence (per view; 기본 → UserDefaults)
@@ -708,25 +761,28 @@ struct ColumnEditor: View {
 
 private struct ResizeHandle: View {
     @Binding var width: CGFloat
+    var onCommit: (CGFloat) -> Void
     @State private var dragStartWidth: CGFloat?
     @State private var isHovering = false
     @State private var isDragging = false
 
     var body: some View {
-        ZStack {
+        ZStack(alignment: .trailing) {
             Rectangle()
-                .fill((isHovering || isDragging) ? Palette.surfaceElevated : Color.clear)
+                .fill((isHovering || isDragging) ? Palette.inspectorSurface.opacity(0.92) : Color.clear)
             Rectangle()
-                .fill((isHovering || isDragging) ? Palette.accentBlue.opacity(0.75) : Palette.hairline)
-                .frame(width: 1)
-            VStack(spacing: 3) {
-                gripDot
-                gripDot
-                gripDot
+                .fill((isHovering || isDragging) ? Palette.accentBlue.opacity(0.9) : Palette.hairline.opacity(0.72))
+                .frame(width: isHovering || isDragging ? 2 : 1)
+            if isHovering || isDragging {
+                HStack(spacing: 0) {
+                    grip
+                        .offset(x: 1)
+                    Spacer(minLength: 0)
+                }
+                .padding(.leading, 2)
             }
-            .opacity(isHovering || isDragging ? 1 : 0.56)
         }
-        .frame(width: 14)
+        .frame(width: 12)
         .frame(maxHeight: .infinity)
         .contentShape(Rectangle())
         .onHover { hovering in
@@ -746,20 +802,45 @@ private struct ResizeHandle: View {
                     if dragStartWidth == nil {
                         dragStartWidth = width
                     }
-                    width = (dragStartWidth ?? width) - value.translation.width
+                    let proposedWidth = (dragStartWidth ?? width) - value.translation.width
+                    var transaction = Transaction()
+                    transaction.animation = nil
+                    withTransaction(transaction) {
+                        width = proposedWidth
+                    }
+
+                    let appliedWidth = width
+                    if abs(appliedWidth - proposedWidth) > 0.5 {
+                        dragStartWidth = appliedWidth + value.translation.width
+                    }
                 }
                 .onEnded { _ in
+                    onCommit(width)
                     dragStartWidth = nil
                     isDragging = false
                 }
         )
-        .help("드래그해서 사이드 보기 너비 조절")
-        .accessibilityLabel("사이드 보기 너비 조절")
+        .animation(.easeOut(duration: 0.12), value: isHovering || isDragging)
+        .help("경계를 드래그해 상세 패널 너비 조절")
+        .accessibilityLabel("상세 패널 너비 조절")
+    }
+
+    private var grip: some View {
+        VStack(spacing: 3) {
+            gripDot
+            gripDot
+            gripDot
+        }
+        .padding(.horizontal, 3)
+        .padding(.vertical, 5)
+        .background(Palette.surfaceElevated)
+        .clipShape(Capsule())
+        .overlay(Capsule().stroke(Palette.accentBlue.opacity(0.24)))
     }
 
     private var gripDot: some View {
-        Capsule()
-            .fill((isHovering || isDragging) ? Palette.accentBlue : Palette.ash)
+        Circle()
+            .fill(Palette.accentBlue)
             .frame(width: 3, height: 3)
     }
 }
@@ -785,6 +866,6 @@ struct UserDetailSheet: View {
             onClose: { dismiss() }
         )
         .frame(width: 780, height: 760)
-        .background(Palette.canvas)
+        .background(Palette.inspectorSurface)
     }
 }

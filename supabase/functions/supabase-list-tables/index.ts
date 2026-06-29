@@ -1,5 +1,5 @@
 import { corsHeaders } from "../_shared/cors.ts";
-import { tokenForSupabaseAccount } from "../_shared/supabase_token.ts";
+import { isSupabaseReauthorizationError, tokenForSupabaseAccount } from "../_shared/supabase_token.ts";
 import { isMgmtHttpError, mgmtPost } from "../_shared/mgmt.ts";
 import { LIST_TABLES_SQL, parseTables } from "./tables.ts";
 
@@ -10,6 +10,17 @@ function scopeMissingResponse(): Response {
     required_scope: "database:read",
   }), {
     status: 403,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
+
+function reauthorizationResponse(): Response {
+  return new Response(JSON.stringify({
+    code: "supabase_reauthorization_required",
+    message: "Supabase 권한을 다시 승인해야 테이블 목록을 불러올 수 있습니다.",
+    required_scope: "database:read",
+  }), {
+    status: 401,
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
 }
@@ -25,6 +36,7 @@ async function handle(req: Request): Promise<Response> {
       status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (e) {
+    if (isSupabaseReauthorizationError(e)) return reauthorizationResponse();
     if (isMgmtHttpError(e) && e.status === 403 && e.body.includes("scope")) {
       return scopeMissingResponse();
     }

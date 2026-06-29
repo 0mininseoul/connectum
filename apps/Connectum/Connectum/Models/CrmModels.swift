@@ -1,6 +1,6 @@
 import Foundation
 
-struct Service: Codable, Identifiable, Hashable {
+struct Service: Codable, Identifiable, Hashable, Sendable {
     let id: String
     let name: String
     let supabaseProjectRef: String?
@@ -47,7 +47,7 @@ struct Service: Codable, Identifiable, Hashable {
     var isDraft: Bool { id.hasPrefix("draft:") }
 }
 
-struct AmplitudeProfile: Codable, Hashable {
+struct AmplitudeProfile: Codable, Hashable, Sendable {
     let os: String?
     let platform: String?
     let deviceFamily: String?
@@ -64,7 +64,7 @@ struct AmplitudeProfile: Codable, Hashable {
 
 // A scalar value out of a jsonb row (supabase_profile). Nested objects/arrays
 // collapse to .other so the model stays simple + Hashable for the Table.
-enum JSONScalar: Codable, Hashable {
+enum JSONScalar: Codable, Hashable, Sendable {
     case string(String), number(Double), bool(Bool), null, other
     init(from decoder: Decoder) throws {
         let c = try decoder.singleValueContainer()
@@ -93,7 +93,7 @@ enum JSONScalar: Codable, Hashable {
     }
 }
 
-struct CrmUser: Codable, Identifiable, Hashable {
+struct CrmUser: Codable, Identifiable, Hashable, Sendable {
     let id: String
     let sourceUserId: String
     let email: String?
@@ -122,7 +122,7 @@ struct CrmUser: Codable, Identifiable, Hashable {
     }
 }
 
-struct CrmUserEvent: Codable, Identifiable, Hashable {
+struct CrmUserEvent: Codable, Identifiable, Hashable, Sendable {
     let id: Int64
     let eventType: String
     let eventTime: String
@@ -135,7 +135,7 @@ struct CrmUserEvent: Codable, Identifiable, Hashable {
     }
 }
 
-struct ChannelRecord: Identifiable, Hashable {
+struct ChannelRecord: Identifiable, Hashable, Sendable {
     let id: String
     let channel: String
     let occurredAt: String?
@@ -143,10 +143,10 @@ struct ChannelRecord: Identifiable, Hashable {
 }
 
 // page_block row whose `content` jsonb holds a channel record.
-struct PageBlockRow: Codable, Identifiable, Hashable {
+struct PageBlockRow: Codable, Identifiable, Hashable, Sendable {
     let id: String
     let content: Content
-    struct Content: Codable, Hashable {
+    struct Content: Codable, Hashable, Sendable {
         let channel: String?
         let occurredAt: String?
         let body: String?
@@ -157,20 +157,20 @@ struct PageBlockRow: Codable, Identifiable, Hashable {
     }
 }
 
-struct NoteBlock: Identifiable, Hashable {
+struct NoteBlock: Identifiable, Hashable, Sendable {
     let id: String
     var type: String
     var text: String
 }
-struct NoteBlockRow: Codable, Identifiable, Hashable {
+struct NoteBlockRow: Codable, Identifiable, Hashable, Sendable {
     let id: String
     let type: String
     let content: TextContent
-    struct TextContent: Codable, Hashable { let text: String? }
+    struct TextContent: Codable, Hashable, Sendable { let text: String? }
     var asNote: NoteBlock { NoteBlock(id: id, type: type, text: content.text ?? "") }
 }
 
-struct HistoryEntry: Codable, Identifiable, Hashable {
+struct HistoryEntry: Codable, Identifiable, Hashable, Sendable {
     let id: String
     let entryDate: String
     let imageUrl: String?
@@ -178,7 +178,7 @@ struct HistoryEntry: Codable, Identifiable, Hashable {
     enum CodingKeys: String, CodingKey { case id, memo, entryDate = "entry_date", imageUrl = "image_url" }
 }
 
-struct DashboardMetrics: Codable, Equatable {
+struct DashboardMetrics: Codable, Equatable, Sendable {
     var total = 0
     var contacted = 0
     var profiled = 0
@@ -186,7 +186,7 @@ struct DashboardMetrics: Codable, Equatable {
     var contactRate: Double { total == 0 ? 0 : Double(contacted) / Double(total) }
 }
 
-struct ViewConfig: Codable, Hashable {
+struct ViewConfig: Codable, Hashable, Sendable {
     var contactFilter: String   // all | contacted | not_contacted
     var profiledOnly: Bool
     var sortKey: String         // created_at | email | contact_status
@@ -215,13 +215,13 @@ struct ViewConfig: Codable, Hashable {
     }
 }
 
-struct SavedView: Codable, Identifiable, Hashable {
+struct SavedView: Codable, Identifiable, Hashable, Sendable {
     let id: String
     let name: String
     let config: ViewConfig
 }
 
-struct ConnAccount: Codable, Identifiable, Hashable {
+struct ConnAccount: Codable, Identifiable, Hashable, Sendable {
     let id: String
     let label: String
     let accountName: String?
@@ -250,20 +250,20 @@ struct ConnAccount: Codable, Identifiable, Hashable {
     }
 }
 
-struct ProjectInfo: Codable, Identifiable, Hashable {
+struct ProjectInfo: Codable, Identifiable, Hashable, Sendable {
     let ref: String; let name: String; let region: String
     var id: String { ref }
 }
-struct TableInfo: Codable, Identifiable, Hashable {
+struct TableInfo: Codable, Identifiable, Hashable, Sendable {
     let schema: String; let table: String
     var id: String { "\(schema).\(table)" }
 }
-struct ColumnInfo: Codable, Identifiable, Hashable {
+struct ColumnInfo: Codable, Identifiable, Hashable, Sendable {
     let column: String; let type: String
     var id: String { column }
 }
 
-struct ServiceTableSpec: Hashable {
+struct ServiceTableSpec: Hashable, Sendable {
     let schema: String; let table: String; let role: String   // "user_table" | "related"
     var userIdCol: String = "id"; var emailCol: String = "email"
     var displayColumns: [String] = []   // columns to show in the operational-DB table
@@ -299,6 +299,12 @@ struct MirroredRow: Codable, Identifiable, Hashable, Sendable {
         case data
     }
 
+    init(id: String, sourcePk: String, data: [String: JSONScalar]) {
+        self.id = id
+        self.sourcePk = sourcePk
+        self.data = data
+    }
+
     // Decode `data` defensively: a NULL/absent jsonb payload must not fail the
     // whole fetch (one bad row would blank the entire table).
     init(from decoder: Decoder) throws {
@@ -310,7 +316,7 @@ struct MirroredRow: Codable, Identifiable, Hashable, Sendable {
 }
 
 // Latest distributable build advertised to the app for the update check.
-struct AppRelease: Codable, Hashable {
+struct AppRelease: Codable, Hashable, Sendable {
     let version: String
     let dmgUrl: String
     let notes: String?
@@ -321,7 +327,7 @@ struct AppRelease: Codable, Hashable {
 }
 
 // Workspace-global Claude (AI) account. Metadata only; tokens live in Vault.
-struct AIAccount: Codable, Identifiable, Hashable {
+struct AIAccount: Codable, Identifiable, Hashable, Sendable {
     let id: String
     let label: String
     let accountName: String?
@@ -332,8 +338,8 @@ struct AIAccount: Codable, Identifiable, Hashable {
 }
 
 // One turn in the AI chat panel (session-memory only).
-struct ChatMessage: Identifiable, Hashable {
-    enum Role { case user, assistant }
+struct ChatMessage: Identifiable, Hashable, Sendable {
+    enum Role: Sendable { case user, assistant }
     let id = UUID()
     let role: Role
     var text: String

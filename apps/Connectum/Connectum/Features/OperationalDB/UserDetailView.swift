@@ -6,6 +6,9 @@ import AppKit
 struct UserDetailView: View {
     @State private var vm: UserDetailViewModel
     @State private var section: UserDetailSection = .workspace
+    @AppStorage("userDetailWorkspaceCardOrder") private var workspaceCardOrderRaw = UserDetailWorkspaceCard.encoded(UserDetailWorkspaceCard.defaultOrder)
+    @State private var isEditingWorkspaceLayout = false
+    @State private var dropTargetCard: UserDetailWorkspaceCard?
     let primaryTitle: String?
     let primaryLabel: String?
     let onExclude: (() -> Void)?
@@ -30,7 +33,7 @@ struct UserDetailView: View {
                 HistoryTabView(crmUserId: vm.user.id)
             }
         }
-        .background(Palette.canvas)
+        .background(Palette.inspectorSurface)
         .background(detailKeyCapture)
         .task { await vm.loadEvents() }
     }
@@ -48,54 +51,30 @@ struct UserDetailView: View {
     }
 
     private var header: some View {
-        ViewThatFits(in: .horizontal) {
-            expandedHeader
-            compactHeader
-        }
-        .background(Palette.surface)
-    }
-
-    private var expandedHeader: some View {
-        HStack(alignment: .center, spacing: Spacing.md) {
-            identityIcon
-            identityText
-            Spacer(minLength: Spacing.md)
-            sectionPicker.frame(width: 170)
-            contactButton
-            excludeButton
-            closeButton
-        }
-        .padding(.horizontal, Spacing.lg)
-        .padding(.vertical, Spacing.md)
-    }
-
-    private var compactHeader: some View {
-        VStack(alignment: .leading, spacing: Spacing.md) {
+        VStack(alignment: .leading, spacing: Spacing.sm) {
             HStack(alignment: .center, spacing: Spacing.md) {
                 identityIcon
                 identityText
+                    .layoutPriority(0)
                 Spacer(minLength: Spacing.sm)
                 closeButton
+                    .layoutPriority(1)
             }
-            HStack(spacing: Spacing.sm) {
-                sectionPicker.frame(width: 150)
-                contactButton
-                excludeButton
-                Spacer(minLength: 0)
-            }
+            headerControls
         }
         .padding(.horizontal, Spacing.lg)
         .padding(.vertical, Spacing.md)
+        .background(Palette.inspectorSurface)
     }
 
     private var identityIcon: some View {
         ZStack {
             Circle().fill(Palette.surfaceElevated)
             Image(systemName: "person.crop.circle")
-                .font(.system(size: 28, weight: .regular))
+                .font(.system(size: 25, weight: .regular))
                 .foregroundStyle(Palette.muted)
         }
-        .frame(width: 46, height: 46)
+        .frame(width: 42, height: 42)
     }
 
     private var identityText: some View {
@@ -104,25 +83,37 @@ struct UserDetailView: View {
                 .font(Typography.cardTitle)
                 .foregroundStyle(Palette.ink)
                 .lineLimit(1)
-            HStack(spacing: Spacing.sm) {
-                if let primaryLabel, primaryLabel != "이메일" {
-                    Text(primaryLabel)
-                    Text("·")
-                }
-                if let email = vm.user.email, primaryTitle != email {
-                    Text(email)
-                    Text("·")
-                }
-                Text(vm.user.sourceUserId)
-                if let createdAt = vm.user.createdAt {
-                    Text("·")
-                    Text(createdAt)
-                }
-            }
-            .font(Typography.caption)
-            .foregroundStyle(Palette.muted)
-            .lineLimit(1)
+            metadataLine
         }
+        .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder private var metadataLine: some View {
+        let parts = headerMetadataParts
+        if !parts.isEmpty {
+            Text(parts.joined(separator: " · "))
+                .font(Typography.caption)
+                .foregroundStyle(Palette.muted)
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
+    }
+
+    private var headerMetadataParts: [String] {
+        var parts: [String] = []
+        if let primaryLabel, primaryLabel != "이메일" {
+            parts.append(primaryLabel)
+        }
+        if let email = vm.user.email, primaryTitle != email {
+            parts.append(email)
+        }
+        if let createdAt = vm.user.createdAt {
+            parts.append(createdAt)
+        }
+        if parts.isEmpty {
+            parts.append(vm.user.sourceUserId)
+        }
+        return parts
     }
 
     private var sectionPicker: some View {
@@ -133,6 +124,30 @@ struct UserDetailView: View {
         }
         .pickerStyle(.segmented)
         .labelsHidden()
+    }
+
+    private var headerControls: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: Spacing.sm) {
+                sectionPicker.frame(width: 154)
+                Spacer(minLength: Spacing.sm)
+                headerActions
+            }
+
+            VStack(alignment: .leading, spacing: Spacing.sm) {
+                sectionPicker.frame(width: 154)
+                headerActions
+            }
+        }
+    }
+
+    private var headerActions: some View {
+        HStack(spacing: Spacing.sm) {
+            contactButton
+            excludeButton
+        }
+        .fixedSize(horizontal: true, vertical: false)
+        .layoutPriority(2)
     }
 
     @ViewBuilder private var excludeButton: some View {
@@ -174,61 +189,234 @@ struct UserDetailView: View {
         }
         .buttonStyle(.plain)
         .disabled(vm.isBusy)
+        .fixedSize(horizontal: true, vertical: false)
     }
 
     private var workspace: some View {
         GeometryReader { proxy in
-            if proxy.size.width < 680 {
-                compactWorkspace
-            } else {
-                expandedWorkspace
-            }
-        }
-    }
-
-    private var expandedWorkspace: some View {
-        HStack(alignment: .top, spacing: 0) {
             ScrollView {
                 VStack(alignment: .leading, spacing: Spacing.lg) {
-                    AISummaryPanel(vm: vm)
-                    RecordsSection(vm: vm)
-                    NotesSection(crmUserId: vm.user.id)
+                    workspaceToolbar
+                    workspaceCards(width: proxy.size.width)
+                    errorText
                 }
                 .padding(Spacing.lg)
                 .frame(maxWidth: .infinity, alignment: .topLeading)
             }
-
-            Divider().overlay(Palette.hairline)
-
-            sideRail
-                .frame(width: 280)
         }
     }
 
-    private var compactWorkspace: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: Spacing.lg) {
-                AISummaryPanel(vm: vm)
-                ProfilePanel(user: vm.user)
-                RecentEventsPanel(events: vm.events)
-                RecordsSection(vm: vm)
-                NotesSection(crmUserId: vm.user.id)
-                errorText
+    private var workspaceToolbar: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .center, spacing: Spacing.md) {
+                workspaceToolbarTitle
+                Spacer(minLength: Spacing.md)
+                workspaceToolbarActions
             }
-            .padding(Spacing.lg)
-            .frame(maxWidth: .infinity, alignment: .topLeading)
+
+            VStack(alignment: .leading, spacing: Spacing.sm) {
+                workspaceToolbarTitle
+                workspaceToolbarActions
+            }
         }
     }
 
-    private var sideRail: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: Spacing.lg) {
-                ProfilePanel(user: vm.user)
-                RecentEventsPanel(events: vm.events)
-                errorText
-            }
-            .padding(Spacing.lg)
+    private var workspaceToolbarTitle: some View {
+        VStack(alignment: .leading, spacing: Spacing.xs) {
+            Text("카드 배치")
+                .font(Typography.body)
+                .foregroundStyle(Palette.ink)
+            Text(isEditingWorkspaceLayout ? "표시 순서 편집 중" : "작업 탭 구성")
+                .font(Typography.caption)
+                .foregroundStyle(Palette.muted)
+                .lineLimit(2)
         }
+    }
+
+    private var workspaceToolbarActions: some View {
+        HStack(spacing: Spacing.sm) {
+            if isEditingWorkspaceLayout {
+                Button {
+                    setWorkspaceCardOrder(UserDetailWorkspaceCard.defaultOrder)
+                } label: {
+                    Label("기본값", systemImage: "arrow.counterclockwise")
+                }
+                .buttonStyle(WorkspaceChromeButtonStyle())
+            }
+            if isEditingWorkspaceLayout {
+                Button {
+                    withAnimation(.snappy(duration: 0.2)) {
+                        isEditingWorkspaceLayout = false
+                        dropTargetCard = nil
+                    }
+                } label: {
+                    Label("완료", systemImage: "checkmark")
+                }
+                .buttonStyle(WorkspacePrimaryButtonStyle())
+            } else {
+                Button {
+                    withAnimation(.snappy(duration: 0.2)) {
+                        isEditingWorkspaceLayout = true
+                        dropTargetCard = nil
+                    }
+                } label: {
+                    Label("수정", systemImage: "slider.horizontal.3")
+                }
+                .buttonStyle(WorkspaceChromeButtonStyle())
+            }
+        }
+    }
+
+    private func workspaceCards(width: CGFloat) -> some View {
+        let order = workspaceCardOrder
+        return Group {
+            if width >= 720 {
+                LazyVGrid(
+                    columns: [
+                        GridItem(.flexible(), spacing: Spacing.lg, alignment: .top),
+                        GridItem(.flexible(), spacing: Spacing.lg, alignment: .top)
+                    ],
+                    alignment: .leading,
+                    spacing: Spacing.lg
+                ) {
+                    ForEach(order) { card in
+                        workspaceCardContainer(card, order: order)
+                    }
+                }
+            } else {
+                VStack(alignment: .leading, spacing: Spacing.lg) {
+                    ForEach(order) { card in
+                        workspaceCardContainer(card, order: order)
+                    }
+                }
+            }
+        }
+    }
+
+    private func workspaceCardContainer(_ card: UserDetailWorkspaceCard, order: [UserDetailWorkspaceCard]) -> some View {
+        VStack(alignment: .leading, spacing: Spacing.sm) {
+            if isEditingWorkspaceLayout {
+                workspaceCardEditBar(card, order: order)
+            }
+            workspaceCardContent(card)
+        }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .padding(isEditingWorkspaceLayout ? Spacing.sm : 0)
+        .background(isEditingWorkspaceLayout ? Palette.surfaceElevated : .clear)
+        .clipShape(RoundedRectangle(cornerRadius: Radius.card))
+        .overlay {
+            if isEditingWorkspaceLayout {
+                RoundedRectangle(cornerRadius: Radius.card)
+                    .stroke(dropTargetCard == card ? Palette.accentBlue : Palette.hairline, lineWidth: dropTargetCard == card ? 2 : 1)
+            }
+        }
+        .dropDestination(for: String.self) { items, _ in
+            guard
+                let rawValue = items.first,
+                let source = UserDetailWorkspaceCard(rawValue: rawValue)
+            else {
+                return false
+            }
+            moveWorkspaceCard(source, to: card)
+            return true
+        } isTargeted: { isTargeted in
+            dropTargetCard = isTargeted ? card : nil
+        }
+    }
+
+    private func workspaceCardEditBar(_ card: UserDetailWorkspaceCard, order: [UserDetailWorkspaceCard]) -> some View {
+        HStack(spacing: Spacing.sm) {
+            Image(systemName: "line.3.horizontal")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Palette.muted)
+                .frame(width: 26, height: 26)
+                .background(Palette.surfaceCard)
+                .clipShape(RoundedRectangle(cornerRadius: Radius.button))
+                .draggable(card.rawValue)
+                .help("드래그해서 위치 변경")
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(card.title)
+                    .font(Typography.caption)
+                    .foregroundStyle(Palette.ink)
+                Text(card.subtitle)
+                    .font(.system(size: 12))
+                    .foregroundStyle(Palette.muted)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: Spacing.sm)
+
+            HStack(spacing: Spacing.xs) {
+                workspaceMoveButton(systemImage: "chevron.up", isDisabled: order.first == card) {
+                    moveWorkspaceCard(card, offset: -1)
+                }
+                workspaceMoveButton(systemImage: "chevron.down", isDisabled: order.last == card) {
+                    moveWorkspaceCard(card, offset: 1)
+                }
+            }
+        }
+    }
+
+    private func workspaceMoveButton(systemImage: String, isDisabled: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(isDisabled ? Palette.muted.opacity(0.45) : Palette.ink)
+                .frame(width: 24, height: 24)
+                .background(Palette.surfaceCard)
+                .clipShape(RoundedRectangle(cornerRadius: Radius.button))
+        }
+        .buttonStyle(.plain)
+        .disabled(isDisabled)
+    }
+
+    @ViewBuilder private func workspaceCardContent(_ card: UserDetailWorkspaceCard) -> some View {
+        switch card {
+        case .aiSummary:
+            AISummaryPanel(vm: vm)
+        case .contactRecords:
+            RecordsSection(vm: vm)
+        case .notes:
+            NotesSection(crmUserId: vm.user.id)
+        case .profile:
+            ProfilePanel(user: vm.user)
+        case .recentEvents:
+            RecentEventsPanel(events: vm.events)
+        }
+    }
+
+    private var workspaceCardOrder: [UserDetailWorkspaceCard] {
+        UserDetailWorkspaceCard.decodedOrder(from: workspaceCardOrderRaw)
+    }
+
+    private func setWorkspaceCardOrder(_ order: [UserDetailWorkspaceCard]) {
+        withAnimation(.snappy(duration: 0.2)) {
+            workspaceCardOrderRaw = UserDetailWorkspaceCard.encoded(order)
+        }
+    }
+
+    private func moveWorkspaceCard(_ card: UserDetailWorkspaceCard, offset: Int) {
+        var order = workspaceCardOrder
+        guard
+            let sourceIndex = order.firstIndex(of: card),
+            order.indices.contains(sourceIndex + offset)
+        else {
+            return
+        }
+
+        order.swapAt(sourceIndex, sourceIndex + offset)
+        setWorkspaceCardOrder(order)
+    }
+
+    @discardableResult
+    private func moveWorkspaceCard(_ source: UserDetailWorkspaceCard, to target: UserDetailWorkspaceCard) -> Bool {
+        let order = workspaceCardOrder
+        let reorderedOrder = UserDetailWorkspaceCard.reordered(order, moving: source, to: target)
+        guard reorderedOrder != order else { return false }
+
+        setWorkspaceCardOrder(reorderedOrder)
+        return true
     }
 
     @ViewBuilder private var errorText: some View {
@@ -292,6 +480,30 @@ private enum UserDetailSection: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+private struct WorkspaceChromeButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(Typography.caption)
+            .foregroundStyle(Palette.ink)
+            .padding(.horizontal, Spacing.md)
+            .frame(height: 30)
+            .background(Palette.surfaceElevated.opacity(configuration.isPressed ? 0.7 : 1))
+            .clipShape(RoundedRectangle(cornerRadius: Radius.button))
+    }
+}
+
+private struct WorkspacePrimaryButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(Typography.caption)
+            .foregroundStyle(Palette.ctaText)
+            .padding(.horizontal, Spacing.md)
+            .frame(height: 30)
+            .background(Palette.ctaFill.opacity(configuration.isPressed ? 0.82 : 1))
+            .clipShape(RoundedRectangle(cornerRadius: Radius.button))
+    }
+}
+
 private struct AISummaryPanel: View {
     @Bindable var vm: UserDetailViewModel
 
@@ -353,8 +565,10 @@ private struct ProfilePanel: View {
     private var profilePreview: [(key: String, value: String)] {
         (user.supabaseProfile ?? [:])
             .sorted { $0.key < $1.key }
+            .map { (key: $0.key, value: $0.value.display) }
+            .filter { !$0.value.isEmpty }
             .prefix(6)
-            .map { ($0.key, String(describing: $0.value)) }
+            .map { $0 }
     }
 
     @ViewBuilder private func detailRow(_ label: String, _ value: String?) -> some View {
@@ -441,56 +655,84 @@ private struct RecordsSection: View {
 
                 Divider().overlay(Palette.hairline)
 
-                HStack(spacing: Spacing.sm) {
-                    Picker("", selection: $channel) {
-                        ForEach(channels, id: \.self) { Text($0).tag($0) }
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .bottom, spacing: Spacing.sm) {
+                        channelPicker
+                            .frame(width: 118)
+                        dateField
+                            .frame(width: 132)
+                        noteField
+                            .frame(minWidth: 160)
+                        addRecordButton
                     }
-                    .labelsHidden()
-                    .frame(width: 120)
 
-                    TextField("날짜", text: $date)
-                        .textFieldStyle(.plain)
-                        .font(Typography.body)
-                        .foregroundStyle(Palette.ink)
-                        .padding(.horizontal, Spacing.sm)
-                        .frame(width: 136, height: 30)
-                        .background(Palette.surfaceElevated)
-                        .clipShape(RoundedRectangle(cornerRadius: Radius.button))
-                }
-
-                HStack(alignment: .bottom, spacing: Spacing.sm) {
-                    TextField("내용", text: $note, axis: .vertical)
-                        .textFieldStyle(.plain)
-                        .lineLimit(2...5)
-                        .font(Typography.body)
-                        .foregroundStyle(Palette.body)
-                        .padding(Spacing.sm)
-                        .background(Palette.surfaceElevated)
-                        .clipShape(RoundedRectangle(cornerRadius: Radius.button))
-                    Button {
-                        let c = channel
-                        let d = date
-                        let b = note
-                        Task {
-                            await vm.addRecord(channel: c, occurredAt: d, body: b)
-                            note = ""
-                            date = ""
+                    VStack(alignment: .leading, spacing: Spacing.sm) {
+                        HStack(spacing: Spacing.sm) {
+                            channelPicker
+                            dateField
                         }
-                    } label: {
-                        Label("추가", systemImage: "plus")
-                            .font(Typography.caption)
-                            .foregroundStyle(Palette.ctaText)
-                            .padding(.horizontal, Spacing.md)
-                            .frame(height: 30)
-                            .background(Palette.ctaFill)
-                            .clipShape(RoundedRectangle(cornerRadius: Radius.button))
+                        HStack(alignment: .bottom, spacing: Spacing.sm) {
+                            noteField
+                            addRecordButton
+                        }
                     }
-                    .buttonStyle(.plain)
-                    .disabled(note.isEmpty)
                 }
             }
         }
         .task { await vm.loadRecords() }
+    }
+
+    private var channelPicker: some View {
+        Picker("", selection: $channel) {
+            ForEach(channels, id: \.self) { Text($0).tag($0) }
+        }
+        .labelsHidden()
+    }
+
+    private var dateField: some View {
+        TextField("날짜", text: $date)
+            .textFieldStyle(.plain)
+            .font(Typography.body)
+            .foregroundStyle(Palette.ink)
+            .padding(.horizontal, Spacing.sm)
+            .frame(height: 30)
+            .background(Palette.surfaceElevated)
+            .clipShape(RoundedRectangle(cornerRadius: Radius.button))
+    }
+
+    private var noteField: some View {
+        TextField("내용", text: $note, axis: .vertical)
+            .textFieldStyle(.plain)
+            .lineLimit(2...5)
+            .font(Typography.body)
+            .foregroundStyle(Palette.body)
+            .padding(Spacing.sm)
+            .frame(minWidth: 0, maxWidth: .infinity)
+            .background(Palette.surfaceElevated)
+            .clipShape(RoundedRectangle(cornerRadius: Radius.button))
+    }
+
+    private var addRecordButton: some View {
+        Button {
+            let c = channel
+            let d = date
+            let b = note
+            Task {
+                await vm.addRecord(channel: c, occurredAt: d, body: b)
+                note = ""
+                date = ""
+            }
+        } label: {
+            Label("추가", systemImage: "plus")
+                .font(Typography.caption)
+                .foregroundStyle(Palette.ctaText)
+                .padding(.horizontal, Spacing.md)
+                .frame(height: 30)
+                .background(Palette.ctaFill)
+                .clipShape(RoundedRectangle(cornerRadius: Radius.button))
+        }
+        .buttonStyle(.plain)
+        .disabled(note.isEmpty)
     }
 }
 
@@ -512,7 +754,7 @@ private struct DetailPanel<Content: View>: View {
             }
             content()
         }
-        .padding(Spacing.lg)
+        .padding(Spacing.md)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Palette.surfaceCard)
         .clipShape(RoundedRectangle(cornerRadius: Radius.card))

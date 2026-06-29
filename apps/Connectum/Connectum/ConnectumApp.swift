@@ -6,17 +6,9 @@ struct ConnectumApp: App {
 
     var body: some Scene {
         WindowGroup {
-            GeometryReader { proxy in
-                RootView(shell: shell)
-                    .frame(
-                        width: max(1, proxy.size.width / shell.uiScale),
-                        height: max(1, proxy.size.height / shell.uiScale),
-                        alignment: .topLeading
-                    )
-                    .scaleEffect(shell.uiScale, anchor: .topLeading)
-            }
-            .preferredColorScheme(shell.theme.colorScheme)
-            .tint(shell.theme.tint)
+            RootView(shell: shell)
+                .preferredColorScheme(shell.theme.colorScheme)
+                .tint(shell.theme.tint)
         }
         .commands { ConnectumCommands(shell: shell) }
         .windowStyle(.hiddenTitleBar)

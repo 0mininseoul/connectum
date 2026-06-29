@@ -8,7 +8,7 @@ enum CrmRepositoryError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .supabaseReauthorizationRequired:
-            return "Supabase 권한을 다시 승인해야 합니다."
+            return "Supabase 연결이 만료됐습니다. 다시 연결하세요."
         case .functionMessage(let message):
             return message
         }
@@ -20,6 +20,67 @@ private struct FunctionErrorBody: Decodable {
     let message: String?
     let error: String?
     let requiredScope: String?
+    let results: [String: FunctionSyncResult]?
+
+    enum CodingKeys: String, CodingKey {
+        case code
+        case message
+        case error
+        case requiredScope = "required_scope"
+        case results
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        code = try? container.decode(String.self, forKey: .code)
+        message = try? container.decode(String.self, forKey: .message)
+        error = try? container.decode(String.self, forKey: .error)
+        requiredScope = try? container.decode(String.self, forKey: .requiredScope)
+        results = try? container.decode([String: FunctionSyncResult].self, forKey: .results)
+    }
+
+    var requiresSupabaseReauthorization: Bool {
+        isSupabaseReauthorizationSignal(code: code, requiredScope: requiredScope, message: message ?? error)
+            || syncFailureMessages.contains { isSupabaseReauthorizationMessage($0) }
+    }
+
+    var syncFailureMessages: [String] {
+        results?.flatMap { serviceName, result in
+            result.failureMessages.map { "\(serviceName) \($0)" }
+        } ?? []
+    }
+}
+
+private struct FunctionSyncResult: Decodable {
+    let supabase: FunctionStepResult?
+    let amplitude: FunctionStepResult?
+
+    var failureMessages: [String] {
+        [
+            ("Supabase", supabase),
+            ("Amplitude", amplitude),
+        ].compactMap { source, result in
+            result?.failureMessage(source: source)
+        }
+    }
+}
+
+private struct FunctionStepResult: Decodable {
+    let status: Int?
+    let body: FunctionStepBody?
+
+    func failureMessage(source: String) -> String? {
+        guard let status, status >= 400 else { return nil }
+        let message = body?.message ?? body?.error ?? "HTTP \(status)"
+        return "\(source): \(message)"
+    }
+}
+
+private struct FunctionStepBody: Decodable {
+    let code: String?
+    let message: String?
+    let error: String?
+    let requiredScope: String?
 
     enum CodingKeys: String, CodingKey {
         case code
@@ -27,6 +88,36 @@ private struct FunctionErrorBody: Decodable {
         case error
         case requiredScope = "required_scope"
     }
+
+    init(from decoder: Decoder) throws {
+        if let value = try? decoder.singleValueContainer().decode(String.self) {
+            code = nil
+            message = nil
+            error = value
+            requiredScope = nil
+            return
+        }
+
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        code = try? container.decode(String.self, forKey: .code)
+        message = try? container.decode(String.self, forKey: .message)
+        error = try? container.decode(String.self, forKey: .error)
+        requiredScope = try? container.decode(String.self, forKey: .requiredScope)
+    }
+}
+
+private func isSupabaseReauthorizationSignal(code: String?, requiredScope: String?, message: String?) -> Bool {
+    code == "supabase_reauthorization_required"
+        || code == "supabase_scope_missing"
+        || requiredScope == "database:read"
+        || requiredScope == "database:write"
+        || isSupabaseReauthorizationMessage(message)
+}
+
+private func isSupabaseReauthorizationMessage(_ message: String?) -> Bool {
+    guard let message else { return false }
+    return message.contains("Supabase OAuth refresh failed")
+        || message.contains("No such refresh token found")
 }
 
 protocol CrmDataProviding: Sendable {
@@ -96,17 +187,20 @@ protocol CrmDataProviding: Sendable {
     func fetchLatestRelease() async throws -> AppRelease?
 }
 
-struct CrmRepository: CrmDataProviding {
+typealias CrmRepository = LocalCrmRepository
+
+struct HostedSupabaseCrmRepository: CrmDataProviding {
     let client: SupabaseClient
     init(client: SupabaseClient = SupabaseClientProvider.shared) { self.client = client }
 
     private func normalizeFunctionError(_ error: Error) -> Error {
         guard case let FunctionsError.httpError(_, data) = error else { return error }
         guard let body = try? JSONDecoder().decode(FunctionErrorBody.self, from: data) else { return error }
-        if body.code == "supabase_scope_missing"
-            || body.requiredScope == "database:read"
-            || body.requiredScope == "database:write" {
+        if body.requiresSupabaseReauthorization {
             return CrmRepositoryError.supabaseReauthorizationRequired
+        }
+        if let message = body.syncFailureMessages.first, !message.isEmpty {
+            return CrmRepositoryError.functionMessage(message)
         }
         if let message = body.message ?? body.error, !message.isEmpty {
             return CrmRepositoryError.functionMessage(message)

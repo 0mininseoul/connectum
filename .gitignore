@@ -12,6 +12,7 @@ supabase/.env
 deno.lock
 
 # Xcode / Swift
+.build/
 apps/Connectum/Connectum.xcodeproj/
 apps/Connectum/.build/
 apps/Connectum/DerivedData/

@@ -12,8 +12,8 @@ function envOpt(name: string): string | null {
 
 export const claudeEnv = {
   clientId: () => env("CLAUDE_OAUTH_CLIENT_ID", ""),
-  authorizeUrl: () => env("CLAUDE_OAUTH_AUTHORIZE_URL", "https://claude.ai/oauth/authorize"),
-  tokenUrl: () => env("CLAUDE_OAUTH_TOKEN_URL", "https://console.anthropic.com/v1/oauth/token"),
+  authorizeUrl: () => env("CLAUDE_OAUTH_AUTHORIZE_URL", "https://platform.claude.com/oauth/authorize"),
+  tokenUrl: () => env("CLAUDE_OAUTH_TOKEN_URL", "https://platform.claude.com/v1/oauth/token"),
   scope: () => env("CLAUDE_OAUTH_SCOPE", "org:create_api_key user:profile user:inference"),
   apiUrl: () => env("CLAUDE_API_URL", "https://api.anthropic.com/v1/messages"),
   oauthBeta: () => env("CLAUDE_OAUTH_BETA", "oauth-2025-04-20"),

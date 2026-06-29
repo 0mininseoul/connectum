@@ -56,6 +56,43 @@ enum ConnectionProvider: String, CaseIterable, Identifiable {
     var logoIsTemplate: Bool { true }
 }
 
+private enum DatabaseProvider: String, CaseIterable, Identifiable {
+    case supabase
+    case firebase
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .supabase: return "Supabase"
+        case .firebase: return "Firebase"
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .supabase: return "Postgres 운영 DB"
+        case .firebase: return "Firestore / Realtime DB"
+        }
+    }
+
+    var tint: Color {
+        switch self {
+        case .supabase: return Color(hex: "3ECF8E")
+        case .firebase: return Color(hex: "F59E0B")
+        }
+    }
+
+    var logoAsset: String {
+        switch self {
+        case .supabase: return "SupabaseLogo"
+        case .firebase: return "FirebaseLogo"
+        }
+    }
+
+    var logoIsTemplate: Bool { true }
+}
+
 private struct ConnectedAccountDeletion: Identifiable {
     let provider: ConnectionProvider
     let account: ConnAccount
@@ -73,11 +110,62 @@ final class ConnectionsViewModel {
     var status: String?
     var didLoad = false
     var isBusy = false
+    var isSupabaseOAuthWaiting = false
     var supabaseProjectNamesByRef: [String: String] = [:]
     var supabaseAccountNamesById: [String: String] = [:]
     var axiomDatasetsByAccountId: [String: [String]] = [:]
     private let repo: CrmDataProviding
-    init(repo: CrmDataProviding = CrmRepository()) { self.repo = repo }
+    private let supportsSupabaseOAuth: Bool
+    private var supabaseOAuthAttemptID: UUID?
+    private var supabaseOAuthReceiver: SupabaseOAuthLoopbackReceiver?
+
+    init(repo: CrmDataProviding = CrmRepository()) {
+        self.repo = repo
+        self.supportsSupabaseOAuth = true
+    }
+
+    var canUseSupabaseOAuth: Bool { supportsSupabaseOAuth }
+
+    private func beginSupabaseOAuthAttempt() -> UUID {
+        supabaseOAuthReceiver?.cancel()
+        let attemptID = UUID()
+        supabaseOAuthAttemptID = attemptID
+        supabaseOAuthReceiver = nil
+        isSupabaseOAuthWaiting = true
+        isBusy = true
+        return attemptID
+    }
+
+    private func bindSupabaseOAuthReceiver(_ receiver: SupabaseOAuthLoopbackReceiver, to attemptID: UUID) {
+        guard supabaseOAuthAttemptID == attemptID else {
+            receiver.cancel()
+            return
+        }
+        supabaseOAuthReceiver = receiver
+    }
+
+    private func finishSupabaseOAuthAttempt(_ attemptID: UUID) {
+        guard supabaseOAuthAttemptID == attemptID else { return }
+        supabaseOAuthReceiver?.cancel()
+        supabaseOAuthReceiver = nil
+        supabaseOAuthAttemptID = nil
+        isSupabaseOAuthWaiting = false
+        isBusy = false
+    }
+
+    private func cancelSupabaseOAuthAttempt(status message: String? = nil) {
+        guard isSupabaseOAuthWaiting else { return }
+        supabaseOAuthAttemptID = nil
+        supabaseOAuthReceiver?.cancel()
+        supabaseOAuthReceiver = nil
+        isSupabaseOAuthWaiting = false
+        isBusy = false
+        if let message { status = message }
+    }
+
+    private func isSupersededSupabaseOAuthAttempt(_ attemptID: UUID) -> Bool {
+        supabaseOAuthAttemptID != attemptID
+    }
 
     func load() async {
         do {
@@ -89,30 +177,29 @@ final class ConnectionsViewModel {
         didLoad = true
     }
 
-    // Claude's public client rejects loopback redirects, so we use the manual
-    // out-of-band flow: open the authorize URL, the user pastes the displayed code.
     private var pendingClaudePKCE: ClaudePKCE?
     private var pendingClaudeState: String?
 
-    // Returns true if the browser opened (caller then shows the paste sheet).
     func startClaudeConnect() -> Bool {
-        let cfg = SupabaseClientProvider.claudeConfig()
-        guard !cfg.clientId.isEmpty else {
-            status = "Claude OAuth 클라이언트가 설정되지 않았습니다 (config.json의 claudeClientId)."
+        let config = SupabaseClientProvider.claudeConfig()
+        guard !config.clientId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            status = "Claude OAuth client_id가 설정되지 않았습니다."
             return false
         }
         let pkce = ClaudePKCE.generate()
-        let state = UUID().uuidString
+        let state = SupabaseOAuthState.generate()
         pendingClaudePKCE = pkce
         pendingClaudeState = state
         let url = ClaudeOAuthFlow.authorizeURL(
-            authorizeURL: cfg.authorizeURL, clientId: cfg.clientId,
-            redirectURI: ClaudeOAuthFlow.manualRedirectURI, scope: cfg.scope,
-            state: state, codeChallenge: pkce.challenge)
-        guard NSWorkspace.shared.open(url) else {
-            status = "브라우저를 열 수 없습니다."
-            return false
-        }
+            authorizeURL: config.authorizeURL,
+            clientId: config.clientId,
+            redirectURI: ClaudeOAuthFlow.manualRedirectURI,
+            scope: config.scope,
+            state: state,
+            codeChallenge: pkce.challenge
+        )
+        NSWorkspace.shared.open(url)
+        status = "브라우저에서 Claude 인증을 완료한 뒤 코드를 붙여넣으세요."
         return true
     }
 
@@ -178,8 +265,20 @@ final class ConnectionsViewModel {
 
     @discardableResult
     func connectSupabaseOAuth() async -> Bool {
-        isBusy = true; defer { isBusy = false }
+        guard canUseSupabaseOAuth else {
+            status = "현재 버전에서는 Supabase 토큰으로 연결하세요. 자동 OAuth는 배포 서버 설정이 완료된 버전에서 제공됩니다."
+            return false
+        }
+        guard !isBusy || isSupabaseOAuthWaiting else {
+            status = "진행 중인 작업이 끝난 뒤 다시 시도하세요."
+            return false
+        }
+
+        let attemptID = beginSupabaseOAuthAttempt()
+        defer { finishSupabaseOAuthAttempt(attemptID) }
+
         let receiver = SupabaseOAuthLoopbackReceiver()
+        bindSupabaseOAuthReceiver(receiver, to: attemptID)
         do {
             let port = try SupabaseOAuthLoopbackReceiver.availablePort()
             let loopbackURL = SupabaseOAuthFlow.redirectURI(port: port)
@@ -189,22 +288,54 @@ final class ConnectionsViewModel {
                 try await receiver.waitForCallback(expectedState: state, port: port)
             }
             guard NSWorkspace.shared.open(authorizeURL) else {
-                receiver.cancel()
                 callbackTask.cancel()
+                receiver.cancel()
                 status = "브라우저를 열 수 없습니다."
                 return false
             }
+            status = "Supabase 승인 대기 중"
             let callback = try await callbackTask.value
             try await repo.connectSupabaseOAuth(code: callback.code, state: callback.state)
-            receiver.cancel()
             status = "Supabase 연결됨"
             await load()
             return true
+        } catch is CancellationError {
+            let superseded = isSupersededSupabaseOAuthAttempt(attemptID)
+            if !superseded {
+                status = "Supabase 승인이 취소되었습니다. 다시 시도하세요."
+            }
+            return superseded
         } catch {
-            receiver.cancel()
-            status = "Supabase 연결 실패: \(friendlySupabaseOAuthError(error))"
+            if !isSupersededSupabaseOAuthAttempt(attemptID) {
+                status = "Supabase OAuth 실패: \(friendlySupabaseOAuthError(error))"
+            }
             return false
         }
+    }
+
+    func openSupabasePATPage() {
+        cancelSupabaseOAuthAttempt()
+        guard let url = URL(string: "https://supabase.com/dashboard/account/tokens") else { return }
+        NSWorkspace.shared.open(url)
+        status = "Supabase 토큰 페이지를 열었습니다. 발급한 PAT는 이 기기의 Keychain에만 저장됩니다."
+    }
+
+    func openFirebaseConsole() {
+        guard let url = URL(string: "https://console.firebase.google.com/") else { return }
+        NSWorkspace.shared.open(url)
+        status = "Firebase는 Google OAuth와 Firestore 매핑이 필요합니다. 현재 지원 검토 중입니다."
+    }
+
+    func openOpenAIAPIKeys() {
+        guard let url = URL(string: "https://platform.openai.com/api-keys") else { return }
+        NSWorkspace.shared.open(url)
+        status = "OpenAI API key 페이지를 열었습니다."
+    }
+
+    func openGeminiOAuthGuide() {
+        guard let url = URL(string: "https://ai.google.dev/gemini-api/docs/oauth") else { return }
+        NSWorkspace.shared.open(url)
+        status = "Gemini OAuth 가이드를 열었습니다."
     }
 
     func repairSupabaseConnection(for service: Service) async -> Bool {
@@ -214,6 +345,10 @@ final class ConnectionsViewModel {
         }
 
         if supabase.isEmpty {
+            guard canUseSupabaseOAuth else {
+                status = "Supabase 계정 연결이 필요합니다. 연동 탭에서 PAT로 Supabase를 다시 연결하세요."
+                return false
+            }
             let connected = await connectSupabaseOAuth()
             guard connected else { return false }
         }
@@ -241,6 +376,12 @@ final class ConnectionsViewModel {
 
     private func friendlySupabaseOAuthError(_ error: Error) -> String {
         let message = error.localizedDescription
+        if message.contains("브리지")
+            || message.localizedCaseInsensitiveContains("oauth bridge")
+            || message.localizedCaseInsensitiveContains("Connectum Supabase OAuth client is not configured")
+            || message.localizedCaseInsensitiveContains("OAuth broker 설정") {
+            return "Connectum OAuth 서버에 Supabase OAuth 앱 client_id/client_secret 설정이 필요합니다. 설정 전에는 PAT 발급 페이지로 보조 연결할 수 있습니다."
+        }
         if message.contains("404") {
             return "OAuth 서버 함수가 아직 배포되지 않았습니다. 수동 연결을 사용하세요."
         }
@@ -411,14 +552,9 @@ struct ConnectionsView: View {
     let onServiceUpdated: () async -> Void
 
     @State private var vm = ConnectionsViewModel()
-    @State private var provider: ConnectionProvider = .supabase
+    @State private var databaseProvider: DatabaseProvider = .supabase
     @State private var sbPat = ""
     @State private var sbLabel = ""
-    @State private var amProjectName = ""
-    @State private var amKey = ""
-    @State private var amSecret = ""
-    @State private var amRegion = "us"
-    @State private var axToken = ""
     @State private var servicePendingDeletion: Service?
     @State private var accountPendingDeletion: ConnectedAccountDeletion?
     @State private var deleteConfirmationName = ""
@@ -437,24 +573,31 @@ struct ConnectionsView: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: Spacing.lg) {
-                header
-                setupContent
-                ClaudeConnectCard(vm: vm)
-                if let service = selectedService, !service.isDraft {
-                    ServiceDangerZone(service: service, isBusy: vm.isBusy) {
-                        deleteConfirmationName = ""
-                        servicePendingDeletion = service
+        GeometryReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: Spacing.lg) {
+                    header
+                    if showsHeaderStatus, let status = vm.status {
+                        ConnectionStatusNotice(text: status)
+                    }
+                    setupContent(viewportHeight: proxy.size.height)
+                    if showsAIProviderSection {
+                        AIProviderConnectionPanel(vm: vm)
+                    }
+                    if let service = selectedService, !service.isDraft {
+                        ServiceDangerZone(service: service, isBusy: vm.isBusy) {
+                            deleteConfirmationName = ""
+                            servicePendingDeletion = service
+                        }
                     }
                 }
+                .frame(maxWidth: contentMaxWidth, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .center)
+                .padding(Spacing.xl)
             }
-            .frame(maxWidth: 720, alignment: .leading)
-            .frame(maxWidth: .infinity, alignment: .center)
-            .padding(Spacing.xl)
+            .scrollContentBackground(.hidden)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
-        .scrollContentBackground(.hidden)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .alert("서비스 삭제", isPresented: Binding(
             get: { servicePendingDeletion != nil },
             set: { if !$0 { servicePendingDeletion = nil; deleteConfirmationName = "" } }
@@ -514,56 +657,29 @@ struct ConnectionsView: View {
         .task {
             await vm.load()
             await vm.refreshDisplayContext(for: selectedService)
-            alignConnectionProvider()
         }
         .onChange(of: vm.connectionSignature) { _, _ in
             Task { await vm.refreshDisplayContext(for: selectedService) }
-            alignConnectionProvider()
         }
         .onChange(of: selectedService?.id) { _, _ in
             Task { await vm.refreshDisplayContext(for: selectedService) }
-            alignConnectionProvider()
         }
     }
 
-    private func alignConnectionProvider() {
-        if let selectedService, requiresSupabaseRepair(selectedService) {
-            provider = .supabase
-            return
-        }
-        if let selectedService, !selectedService.isDraft {
-            let providers = availableOptionalProviders(for: selectedService)
-            if let first = providers.first, !providers.contains(provider) {
-                provider = first
-            }
-            return
-        }
-        guard let first = vm.providersNeedingConnection.first else { return }
-        if !vm.providersNeedingConnection.contains(provider) {
-            provider = first
-        }
-    }
-
-    @ViewBuilder private var setupContent: some View {
+    @ViewBuilder private func setupContent(viewportHeight: CGFloat) -> some View {
         if selectedService?.isDraft == true {
             if vm.supabase.isEmpty {
-                AccountConnectionPanel(
+                DatabaseConnectionPanel(
                     vm: vm,
-                    provider: $provider,
-                    availableProviders: [.supabase],
+                    provider: $databaseProvider,
                     sbPat: $sbPat,
-                    sbLabel: $sbLabel,
-                    amKey: $amKey,
-                    amSecret: $amSecret,
-                    amProjectName: $amProjectName,
-                    amRegion: $amRegion,
-                    axToken: $axToken
+                    sbLabel: $sbLabel
                 )
-                .frame(width: 480, alignment: .top)
-                .frame(maxWidth: .infinity, alignment: .center)
+                .frame(minWidth: 680, maxWidth: .infinity, alignment: .topLeading)
             } else {
                 ServiceWizardView(
                     draftService: selectedService,
+                    viewportHeight: viewportHeight,
                     onCreated: onServiceCreated
                 )
                 .frame(minWidth: 640, maxWidth: 860, alignment: .topLeading)
@@ -615,17 +731,17 @@ struct ConnectionsView: View {
         return !vm.supabase.contains { $0.id == accountId }
     }
 
-    private func availableOptionalProviders(for service: Service) -> [ConnectionProvider] {
-        ConnectionProvider.allCases.filter { provider in
-            switch provider {
-            case .supabase:
-                return false
-            case .amplitude:
-                return service.amplitudeAccountId == nil && vm.amplitude.isEmpty
-            case .axiom:
-                return service.axiomAccountId == nil && vm.axiom.isEmpty
-            }
-        }
+    private var showsAIProviderSection: Bool {
+        guard let selectedService, !selectedService.isDraft else { return false }
+        return !requiresSupabaseRepair(selectedService)
+    }
+
+    private var showsHeaderStatus: Bool {
+        selectedService?.isDraft != true
+    }
+
+    private var contentMaxWidth: CGFloat {
+        selectedService?.isDraft == true ? 960 : 760
     }
 
     private var emptySelectionPanel: some View {
@@ -648,23 +764,72 @@ struct ConnectionsView: View {
     }
 
     private var header: some View {
-        HStack(alignment: .center, spacing: Spacing.md) {
-            VStack(alignment: .leading, spacing: Spacing.xs) {
-                Text(selectedService?.isDraft == true ? "새 서비스" : "연동")
-                    .font(Typography.cardTitle)
-                    .foregroundStyle(Palette.ink)
-                Text(selectedService?.isDraft == true ? "연동 계정과 운영 DB 기준을 정하세요" : "서비스별 데이터 연결 상태")
-                    .font(Typography.caption)
-                    .foregroundStyle(Palette.muted)
-            }
-            Spacer()
-            if let status = vm.status {
-                Text(status)
-                    .font(Typography.caption)
-                    .foregroundStyle(Palette.accentBlue)
-                    .lineLimit(1)
-            }
+        VStack(alignment: .leading, spacing: Spacing.xs) {
+            Text(selectedService?.isDraft == true ? "새 서비스" : "연동")
+                .font(Typography.cardTitle)
+                .foregroundStyle(Palette.ink)
+            Text(selectedService?.isDraft == true ? "연동 계정과 운영 DB 기준을 정하세요" : "서비스별 데이터 연결 상태")
+                .font(Typography.caption)
+                .foregroundStyle(Palette.muted)
+                .fixedSize(horizontal: false, vertical: true)
         }
+    }
+}
+
+struct ConnectionStatusNotice: View {
+    let text: String
+
+    private var tint: Color {
+        if isError {
+            return Palette.accentRed
+        }
+        if text.localizedCaseInsensitiveContains("필요")
+            || text.localizedCaseInsensitiveContains("대기") {
+            return Palette.accentBlue
+        }
+        if text.localizedCaseInsensitiveContains("완료")
+            || text.localizedCaseInsensitiveContains("연결됨") {
+            return Palette.accentGreen
+        }
+        return Palette.accentBlue
+    }
+
+    private var isError: Bool {
+        text.localizedCaseInsensitiveContains("실패")
+            || text.localizedCaseInsensitiveContains("오류")
+            || text.localizedCaseInsensitiveContains("취소")
+    }
+
+    private var isSuccess: Bool {
+        text.localizedCaseInsensitiveContains("완료")
+            || text.localizedCaseInsensitiveContains("연결됨")
+    }
+
+    private var icon: String {
+        if isError { return "exclamationmark.circle.fill" }
+        if isSuccess { return "checkmark.circle.fill" }
+        return "info.circle.fill"
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: Spacing.sm) {
+            Image(systemName: icon)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(tint)
+                .padding(.top, 1)
+            Text(text)
+                .font(Typography.caption)
+                .foregroundStyle(Palette.body)
+                .lineLimit(nil)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, Spacing.md)
+        .padding(.vertical, Spacing.sm)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(tint.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: Radius.row))
+        .overlay(RoundedRectangle(cornerRadius: Radius.row).stroke(tint.opacity(0.22)))
     }
 }
 
@@ -692,7 +857,7 @@ private struct SetupGuidePanel: View {
                 .fixedSize(horizontal: false, vertical: true)
 
             VStack(alignment: .leading, spacing: Spacing.sm) {
-                guideRow(icon: "safari", title: "Supabase 승인", state: mode == .connectSupabase ? "필요" : "완료")
+                guideRow(icon: "person.crop.circle.badge.checkmark", title: "Supabase 계정", state: mode == .connectSupabase ? "필요" : "완료")
                 guideRow(icon: "rectangle.stack", title: "프로젝트 선택", state: mode == .connectSupabase ? "다음" : "진행 중")
                 guideRow(icon: "person.crop.circle", title: "유저 테이블 지정", state: "다음")
             }
@@ -706,7 +871,7 @@ private struct SetupGuidePanel: View {
 
     private var title: String {
         switch mode {
-        case .connectSupabase: return "Supabase부터 연결하세요"
+        case .connectSupabase: return "데이터베이스를 연결하세요"
         case .configureService: return "서비스 기준을 정하세요"
         }
     }
@@ -714,7 +879,7 @@ private struct SetupGuidePanel: View {
     private var detail: String {
         switch mode {
         case .connectSupabase:
-            return "브라우저에서 Supabase 권한을 승인하면 프로젝트와 테이블을 선택할 수 있습니다."
+            return "운영 데이터가 있는 Supabase 계정을 연결하면 프로젝트와 테이블을 선택할 수 있습니다."
         case .configureService:
             return "프로젝트를 불러온 뒤 운영 DB의 유저 테이블과 화면에 보여줄 컬럼을 선택합니다."
         }
@@ -780,7 +945,7 @@ private struct SupabaseRepairPanel: View {
                     Text("운영 DB 원본을 다시 연결하세요")
                         .font(Typography.cardTitle)
                         .foregroundStyle(Palette.ink)
-                    Text("이 서비스의 Supabase 계정이 삭제되어 동기화할 수 없습니다. 같은 프로젝트에 접근할 수 있는 Supabase 계정을 승인하면 기존 테이블 설정을 그대로 사용합니다.")
+                    Text("이 서비스의 Supabase 계정이 삭제되어 동기화할 수 없습니다. 연동 탭에서 같은 프로젝트에 접근할 수 있는 계정을 연결하면 기존 테이블 설정을 그대로 사용합니다.")
                         .font(Typography.caption)
                         .foregroundStyle(Palette.muted)
                         .fixedSize(horizontal: false, vertical: true)
@@ -794,7 +959,7 @@ private struct SupabaseRepairPanel: View {
             }
 
             Button(action: onRepair) {
-                Label(isBusy ? "브라우저 대기 중" : "Supabase 다시 연결", systemImage: "safari")
+                Label(isBusy ? "확인 중" : "연결된 계정으로 복구", systemImage: "person.crop.circle.badge.checkmark")
                     .font(Typography.body)
                     .foregroundStyle(Palette.ctaText)
                     .padding(.horizontal, Spacing.lg)
@@ -1144,58 +1309,106 @@ private struct ConnectedAccountsPanel: View {
     }
 }
 
-// Workspace-global Claude (AI) connection — powers the AI chat panel (⌘I).
-private struct ClaudeConnectCard: View {
+// Workspace-global AI provider connection — powers the AI chat panel (⌘I).
+private struct AIProviderConnectionPanel: View {
     @Bindable var vm: ConnectionsViewModel
     @State private var showPaste = false
     @State private var pasteCode = ""
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Spacing.md) {
-            HStack(spacing: Spacing.md) {
-                IconChip(tint: Palette.claude, size: 38) { ClaudeMark(size: 20) }
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Claude")
-                        .font(Typography.body)
-                        .foregroundStyle(Palette.ink)
-                    Text("AI 채팅 (⌘I) · 워크스페이스 전역")
-                        .font(.system(size: 11))
-                        .foregroundStyle(Palette.muted)
-                }
-                Spacer()
+        VStack(alignment: .leading, spacing: Spacing.lg) {
+            VStack(alignment: .leading, spacing: Spacing.xs) {
+                Text("AI 연결")
+                    .font(Typography.body)
+                    .foregroundStyle(Palette.ink)
+                Text("서비스 데이터가 준비되면 사용할 AI 계정을 선택합니다.")
+                    .font(Typography.caption)
+                    .foregroundStyle(Palette.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            aiProviderRow(
+                icon: { ClaudeMark(size: 18) },
+                tint: Palette.claude,
+                title: "Claude",
+                subtitle: "OAuth 지원 · 현재 사용 가능",
+                detail: vm.claude == nil ? "Claude 계정으로 연결하면 AI 채팅에서 현재 서비스 데이터를 질문할 수 있습니다." : "Claude 계정으로 AI 채팅을 사용할 수 있습니다.",
+                status: vm.claude == nil ? nil : "연결됨"
+            ) {
                 if vm.claude != nil {
-                    StatusPill(text: "연결됨", color: Palette.accentGreen)
+                    Button { Task { await vm.disconnectClaude() } } label: {
+                        Label("해제", systemImage: "xmark.circle")
+                            .font(Typography.caption)
+                            .foregroundStyle(Palette.accentRed)
+                            .frame(height: 30)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(vm.isBusy)
+                } else {
+                    Button {
+                        showPaste = vm.startClaudeConnect()
+                    } label: {
+                        Label("연결", systemImage: "person.crop.circle.badge.checkmark")
+                            .font(Typography.caption)
+                            .foregroundStyle(Palette.ctaText)
+                            .padding(.horizontal, Spacing.md)
+                            .frame(height: 32)
+                            .background(Palette.ctaFill)
+                            .clipShape(RoundedRectangle(cornerRadius: Radius.button))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(vm.isBusy)
                 }
             }
 
-            Text("내 Claude 구독으로 로그인하면 현재 선택한 서비스의 데이터를 이해한 채팅을 쓸 수 있어요.")
-                .font(Typography.caption)
-                .foregroundStyle(Palette.muted)
-                .fixedSize(horizontal: false, vertical: true)
-
-            if vm.claude != nil {
-                Button { Task { await vm.disconnectClaude() } } label: {
-                    Label("연결 해제", systemImage: "xmark.circle")
-                        .font(Typography.caption)
-                        .foregroundStyle(Palette.accentRed)
-                        .frame(height: 32)
-                }
-                .buttonStyle(.plain)
-                .disabled(vm.isBusy)
-            } else {
+            aiProviderRow(
+                icon: {
+                    ProviderLogo(assetName: "ChatGPTLogo", isTemplate: true, size: 18, tint: Color(hex: "10A37F"))
+                },
+                tint: Color(hex: "10A37F"),
+                title: "OpenAI",
+                subtitle: "검토 결과 · API key 방식 우선",
+                detail: "일반 서드파티 앱에서 사용자의 ChatGPT 구독을 그대로 쓰는 OAuth API는 공개 제품 흐름이 아닙니다.",
+                status: "설계 필요"
+            ) {
                 Button {
-                    if vm.startClaudeConnect() { showPaste = true }
+                    vm.openOpenAIAPIKeys()
                 } label: {
-                    Label("Claude 계정 연결", systemImage: "safari")
-                        .font(Typography.body)
-                        .foregroundStyle(Palette.ctaText)
-                        .padding(.horizontal, Spacing.lg)
-                        .frame(height: 38)
-                        .background(Palette.ctaFill)
+                    Label("API key", systemImage: "key")
+                        .font(Typography.caption)
+                        .foregroundStyle(Palette.body)
+                        .padding(.horizontal, Spacing.sm)
+                        .frame(height: 30)
+                        .background(Palette.surface)
                         .clipShape(RoundedRectangle(cornerRadius: Radius.button))
+                        .overlay(RoundedRectangle(cornerRadius: Radius.button).stroke(Palette.hairline))
                 }
                 .buttonStyle(.plain)
-                .disabled(vm.isBusy)
+            }
+
+            aiProviderRow(
+                icon: {
+                    ProviderLogo(assetName: "GeminiLogo", isTemplate: true, size: 18, tint: Color(hex: "8E75B2"))
+                },
+                tint: Color(hex: "8E75B2"),
+                title: "Gemini",
+                subtitle: "검토 결과 · Google OAuth 가능",
+                detail: "Gemini API는 OAuth를 지원하지만 Google Cloud 프로젝트, OAuth 클라이언트, 권한 범위 설정이 필요합니다.",
+                status: "준비 중"
+            ) {
+                Button {
+                    vm.openGeminiOAuthGuide()
+                } label: {
+                    Label("가이드", systemImage: "safari")
+                        .font(Typography.caption)
+                        .foregroundStyle(Palette.body)
+                        .padding(.horizontal, Spacing.sm)
+                        .frame(height: 30)
+                        .background(Palette.surface)
+                        .clipShape(RoundedRectangle(cornerRadius: Radius.button))
+                        .overlay(RoundedRectangle(cornerRadius: Radius.button).stroke(Palette.hairline))
+                }
+                .buttonStyle(.plain)
             }
         }
         .padding(Spacing.lg)
@@ -1203,7 +1416,46 @@ private struct ClaudeConnectCard: View {
         .background(Palette.surfaceCard)
         .clipShape(RoundedRectangle(cornerRadius: Radius.card))
         .overlay(RoundedRectangle(cornerRadius: Radius.card).stroke(Palette.hairline))
-        .sheet(isPresented: $showPaste) { pasteSheet }
+        .sheet(isPresented: $showPaste) {
+            pasteSheet
+        }
+    }
+
+    private func aiProviderRow<Icon: View, Action: View>(
+        @ViewBuilder icon: @escaping () -> Icon,
+        tint: Color,
+        title: String,
+        subtitle: String,
+        detail: String,
+        status: String?,
+        @ViewBuilder action: () -> Action
+    ) -> some View {
+        HStack(alignment: .top, spacing: Spacing.md) {
+            IconChip(tint: tint, size: 34) { icon() }
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: Spacing.sm) {
+                    Text(title)
+                        .font(Typography.body)
+                        .foregroundStyle(Palette.ink)
+                    if let status {
+                        StatusPill(text: status, color: status == "연결됨" ? Palette.accentGreen : Palette.ash)
+                    }
+                }
+                Text(subtitle)
+                    .font(.system(size: 11))
+                    .foregroundStyle(Palette.muted)
+                Text(detail)
+                    .font(Typography.caption)
+                    .foregroundStyle(Palette.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: Spacing.md)
+            action()
+        }
+        .padding(Spacing.md)
+        .background(Palette.surfaceElevated)
+        .clipShape(RoundedRectangle(cornerRadius: Radius.row))
+        .overlay(RoundedRectangle(cornerRadius: Radius.row).stroke(Palette.hairline))
     }
 
     private var pasteSheet: some View {
@@ -1245,128 +1497,255 @@ private struct ClaudeConnectCard: View {
     }
 }
 
-private struct AccountConnectionPanel: View {
+private struct DatabaseConnectionPanel: View {
     @Bindable var vm: ConnectionsViewModel
-    @Binding var provider: ConnectionProvider
-    let availableProviders: [ConnectionProvider]
-    var title = "계정 추가"
+    @Binding var provider: DatabaseProvider
     @Binding var sbPat: String
     @Binding var sbLabel: String
-    @Binding var amKey: String
-    @Binding var amSecret: String
-    @Binding var amProjectName: String
-    @Binding var amRegion: String
-    @Binding var axToken: String
-    @State private var showManualSupabase = false
+    @State private var showPATFallback = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Spacing.md) {
-            HStack {
-                Text(title)
-                    .font(Typography.body)
+        VStack(alignment: .leading, spacing: Spacing.xl) {
+            VStack(alignment: .leading, spacing: Spacing.xs) {
+                Text("데이터베이스 연결")
+                    .font(Typography.cardTitle)
                     .foregroundStyle(Palette.ink)
-                Spacer()
-                if vm.isBusy {
-                    ProgressView()
-                        .scaleEffect(0.6)
-                        .controlSize(.small)
+                Text("운영 데이터가 있는 DB를 먼저 연결하세요. AI 계정은 서비스 생성 후 연결합니다.")
+                    .font(Typography.caption)
+                    .foregroundStyle(Palette.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if let status = vm.status {
+                ConnectionStatusNotice(text: status)
+            }
+
+            HStack(spacing: Spacing.lg) {
+                ForEach(DatabaseProvider.allCases) { option in
+                    providerTile(option)
                 }
             }
 
-            Picker("", selection: $provider) {
-                ForEach(availableProviders) { provider in
-                    Text(provider.shortTitle).tag(provider)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-
-            providerFields
-
-            if provider != .supabase {
-                Button {
-                    Task { await connect() }
-                } label: {
-                    Label(vm.isBusy ? "연결 중" : "\(provider.shortTitle) 연결", systemImage: "link")
-                        .font(Typography.body)
-                        .foregroundStyle(Palette.ctaText)
-                        .padding(.horizontal, Spacing.md)
-                        .frame(height: 36)
-                        .background(Palette.ctaFill)
-                        .clipShape(RoundedRectangle(cornerRadius: Radius.button))
-                }
-                .buttonStyle(.plain)
-                .disabled(vm.isBusy || !canSubmit)
+            switch provider {
+            case .supabase:
+                supabaseConnectStep
+            case .firebase:
+                firebaseConnectStep
             }
         }
-        .padding(Spacing.lg)
+        .padding(Spacing.xxl)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Palette.surfaceCard)
         .clipShape(RoundedRectangle(cornerRadius: Radius.card))
         .overlay(RoundedRectangle(cornerRadius: Radius.card).stroke(Palette.hairline))
     }
 
-    @ViewBuilder private var providerFields: some View {
-        switch provider {
-        case .supabase:
-            Text("브라우저에서 Supabase 권한을 승인합니다. 토큰은 Connectum 서버에만 저장됩니다.")
-                .font(Typography.caption)
-                .foregroundStyle(Palette.muted)
-                .fixedSize(horizontal: false, vertical: true)
-            Button {
-                Task { await vm.connectSupabaseOAuth() }
-            } label: {
-                Label(vm.isBusy ? "브라우저 대기 중" : "Supabase로 계속하기", systemImage: "safari")
-                    .font(Typography.body)
-                    .foregroundStyle(Palette.ctaText)
-                    .padding(.horizontal, Spacing.lg)
-                    .frame(height: 38)
-                    .background(Palette.ctaFill)
-                    .clipShape(RoundedRectangle(cornerRadius: Radius.button))
+    private func providerTile(_ option: DatabaseProvider) -> some View {
+        let selected = provider == option
+        return Button {
+            withAnimation(.easeInOut(duration: 0.15)) {
+                provider = option
             }
-            .buttonStyle(.plain)
-            .disabled(vm.isBusy)
+        } label: {
+            HStack(spacing: Spacing.md) {
+                IconChip(tint: option.tint, size: 32, corner: Radius.badge) {
+                    ProviderLogo(assetName: option.logoAsset, isTemplate: option.logoIsTemplate, size: 18, tint: option.tint)
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(option.title)
+                        .font(Typography.body)
+                        .foregroundStyle(Palette.ink)
+                    Text(option.subtitle)
+                        .font(.system(size: 11))
+                        .foregroundStyle(Palette.muted)
+                }
+                Spacer(minLength: Spacing.sm)
+                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(selected ? option.tint : Palette.ash)
+            }
+            .padding(Spacing.md)
+            .frame(maxWidth: .infinity, minHeight: 88, alignment: .leading)
+            .background(selected ? option.tint.opacity(0.08) : Palette.surfaceElevated)
+            .clipShape(RoundedRectangle(cornerRadius: Radius.row))
+            .overlay(
+                RoundedRectangle(cornerRadius: Radius.row)
+                    .stroke(selected ? option.tint.opacity(0.55) : Palette.hairline)
+            )
+        }
+        .buttonStyle(.plain)
+    }
 
-            DisclosureGroup("수동 연결", isExpanded: $showManualSupabase) {
+    private var supabaseConnectStep: some View {
+        VStack(alignment: .leading, spacing: Spacing.lg) {
+            if vm.canUseSupabaseOAuth {
+                supabaseOAuthApprovalRow
+            } else {
+                connectionSummary(
+                    logoAsset: "SupabaseLogo",
+                    tint: DatabaseProvider.supabase.tint,
+                    title: "Supabase 토큰으로 연결",
+                    detail: "현재 버전에서는 PAT 연결을 사용합니다. 토큰은 이 기기의 Keychain에만 저장되고 프로젝트 목록을 가져오는 데 사용됩니다."
+                )
+
+                Button {
+                    vm.openSupabasePATPage()
+                    showPATFallback = true
+                } label: {
+                    Label("토큰 발급 페이지 열기", systemImage: "key")
+                        .font(Typography.caption)
+                        .foregroundStyle(Palette.body)
+                        .padding(.horizontal, Spacing.md)
+                        .frame(height: 36)
+                        .background(Palette.surface)
+                        .clipShape(RoundedRectangle(cornerRadius: Radius.button))
+                        .overlay(RoundedRectangle(cornerRadius: Radius.button).stroke(Palette.hairline))
+                }
+                .buttonStyle(.plain)
+            }
+
+            if showPATFallback || !vm.canUseSupabaseOAuth {
                 VStack(alignment: .leading, spacing: Spacing.sm) {
+                    Text("Supabase 토큰 페이지에서 Personal Access Token을 만든 뒤 붙여넣으세요.")
+                        .font(Typography.caption)
+                        .foregroundStyle(Palette.muted)
                     connectionField("Supabase Personal Access Token", text: $sbPat, secure: true)
                     connectionField("계정 이름 또는 이메일", text: $sbLabel)
                     Button {
-                        Task { await connect() }
+                        Task {
+                            await vm.addSupabase(pat: sbPat, label: sbLabel)
+                            sbPat = ""
+                            sbLabel = ""
+                        }
                     } label: {
-                        Label(vm.isBusy ? "연결 중" : "PAT로 연결", systemImage: "key")
+                        Label(vm.isBusy ? "연결 중" : "PAT로 연결", systemImage: "key.fill")
                             .font(Typography.caption)
-                            .foregroundStyle(Palette.body)
+                            .foregroundStyle(Palette.ctaText)
+                            .padding(.horizontal, Spacing.md)
                             .frame(height: 34)
+                            .background(Palette.ctaFill)
+                            .clipShape(RoundedRectangle(cornerRadius: Radius.button))
                     }
                     .buttonStyle(.plain)
                     .disabled(vm.isBusy || sbPat.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
-                .padding(.top, Spacing.xs)
+                .padding(Spacing.md)
+                .background(Palette.surfaceElevated)
+                .clipShape(RoundedRectangle(cornerRadius: Radius.row))
+                .overlay(RoundedRectangle(cornerRadius: Radius.row).stroke(Palette.hairline))
             }
-            .font(Typography.caption)
-            .foregroundStyle(Palette.muted)
-        case .amplitude:
-            Text("Export API 자격증명으로 이벤트 연결을 검증합니다. Amplitude API가 프로젝트 이름을 제공하지 않으므로 프로젝트 이름만 직접 입력합니다.")
-                .font(Typography.caption)
-                .foregroundStyle(Palette.muted)
-                .fixedSize(horizontal: false, vertical: true)
-            connectionField("프로젝트 이름", text: $amProjectName)
-            connectionField("API Key", text: $amKey)
-            connectionField("Secret Key", text: $amSecret, secure: true)
-            Picker("리전", selection: $amRegion) {
-                Text("US").tag("us")
-                Text("EU").tag("eu")
+        }
+    }
+
+    private var supabaseOAuthApprovalRow: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .center, spacing: Spacing.lg) {
+                supabaseOAuthSummary
+                    .frame(maxWidth: 420, alignment: .leading)
+                Spacer(minLength: Spacing.lg)
+                supabaseOAuthActions
+                    .fixedSize(horizontal: true, vertical: false)
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .frame(width: 140)
-        case .axiom:
-            Text("Axiom API Token 또는 PAT로 데이터셋을 불러옵니다. 사용자/조직 정보 권한이 있으면 계정명도 자동으로 표시합니다.")
-                .font(Typography.caption)
-                .foregroundStyle(Palette.muted)
-                .fixedSize(horizontal: false, vertical: true)
-            connectionField("API Token 또는 PAT", text: $axToken, secure: true)
+
+            VStack(alignment: .leading, spacing: Spacing.md) {
+                supabaseOAuthSummary
+                supabaseOAuthActions
+            }
+        }
+    }
+
+    private var supabaseOAuthSummary: some View {
+        connectionSummary(
+            logoAsset: "SupabaseLogo",
+            tint: DatabaseProvider.supabase.tint,
+            title: "브라우저에서 Supabase 승인",
+            detail: vm.isSupabaseOAuthWaiting
+                ? "브라우저 창을 닫았거나 다시 열어야 하면 다시 시도하세요."
+                : "Supabase 계정 승인만으로 접근 가능한 프로젝트 목록을 가져옵니다."
+        )
+    }
+
+    private var supabaseOAuthActions: some View {
+        HStack(spacing: Spacing.sm) {
+            Button {
+                Task {
+                    let connected = await vm.connectSupabaseOAuth()
+                    if !connected { showPATFallback = true }
+                }
+            } label: {
+                Label(
+                    vm.isSupabaseOAuthWaiting ? "다시 시도" : "Supabase로 계속",
+                    systemImage: vm.isSupabaseOAuthWaiting ? "arrow.clockwise" : "person.crop.circle.badge.checkmark"
+                )
+                    .font(Typography.body)
+                    .foregroundStyle(Palette.ctaText)
+                    .padding(.horizontal, Spacing.lg)
+                    .frame(height: 40)
+                    .background(Palette.ctaFill)
+                    .clipShape(RoundedRectangle(cornerRadius: Radius.button))
+            }
+            .buttonStyle(.plain)
+            .disabled(vm.isBusy && !vm.isSupabaseOAuthWaiting)
+
+            Button {
+                vm.openSupabasePATPage()
+                showPATFallback = true
+            } label: {
+                Label("PAT 발급 페이지", systemImage: "key")
+                    .font(Typography.caption)
+                    .foregroundStyle(Palette.body)
+                    .padding(.horizontal, Spacing.md)
+                    .frame(height: 36)
+                    .background(Palette.surface)
+                    .clipShape(RoundedRectangle(cornerRadius: Radius.button))
+                    .overlay(RoundedRectangle(cornerRadius: Radius.button).stroke(Palette.hairline))
+            }
+            .buttonStyle(.plain)
+        }
+        .fixedSize(horizontal: true, vertical: false)
+    }
+
+    private var firebaseConnectStep: some View {
+        VStack(alignment: .leading, spacing: Spacing.md) {
+            connectionSummary(
+                logoAsset: "FirebaseLogo",
+                tint: DatabaseProvider.firebase.tint,
+                title: "Firebase 지원 준비 중",
+                detail: "Google OAuth 인증은 가능하지만 Firestore/Realtime DB를 운영 DB로 쓰려면 프로젝트 권한, 컬렉션 선택, 문서 ID 매핑이 추가로 필요합니다."
+            )
+            HStack(spacing: Spacing.sm) {
+                Button {
+                    vm.openFirebaseConsole()
+                } label: {
+                    Label("Firebase 콘솔", systemImage: "safari")
+                        .font(Typography.caption)
+                        .foregroundStyle(Palette.body)
+                        .padding(.horizontal, Spacing.md)
+                        .frame(height: 36)
+                        .background(Palette.surface)
+                        .clipShape(RoundedRectangle(cornerRadius: Radius.button))
+                        .overlay(RoundedRectangle(cornerRadius: Radius.button).stroke(Palette.hairline))
+                }
+                .buttonStyle(.plain)
+                StatusPill(text: "데이터 모델 확장 필요", color: Palette.ash)
+            }
+        }
+    }
+
+    private func connectionSummary(logoAsset: String, tint: Color, title: String, detail: String) -> some View {
+        HStack(alignment: .top, spacing: Spacing.md) {
+            IconChip(tint: tint, size: 28, corner: Radius.badge) {
+                ProviderLogo(assetName: logoAsset, isTemplate: true, size: 16, tint: tint)
+            }
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(Typography.body)
+                    .foregroundStyle(Palette.ink)
+                Text(detail)
+                    .font(Typography.caption)
+                    .foregroundStyle(Palette.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 
@@ -1383,35 +1762,8 @@ private struct AccountConnectionPanel: View {
         .foregroundStyle(Palette.ink)
         .padding(.horizontal, Spacing.sm)
         .frame(height: 36)
-        .background(Palette.surfaceElevated)
+        .background(Palette.surface)
         .clipShape(RoundedRectangle(cornerRadius: Radius.button))
         .overlay(RoundedRectangle(cornerRadius: Radius.button).stroke(Palette.hairline))
-    }
-
-    private func connect() async {
-        switch provider {
-        case .supabase:
-            await vm.addSupabase(pat: sbPat, label: sbLabel)
-            sbPat = ""; sbLabel = ""
-        case .amplitude:
-            await vm.addAmplitude(projectName: amProjectName, key: amKey, secret: amSecret, region: amRegion)
-            amProjectName = ""; amKey = ""; amSecret = ""
-        case .axiom:
-            await vm.addAxiom(token: axToken)
-            axToken = ""
-        }
-    }
-
-    private var canSubmit: Bool {
-        switch provider {
-        case .supabase:
-            return !sbPat.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        case .amplitude:
-            return !amProjectName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                && !amKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                && !amSecret.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        case .axiom:
-            return !axToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        }
     }
 }

@@ -9,6 +9,12 @@ type SupabaseAccountTokenRow = {
   expires_at?: string | null;
 };
 
+export function isSupabaseReauthorizationError(error: unknown): boolean {
+  const message = String(error);
+  return message.includes("Supabase OAuth refresh failed")
+    || message.includes("No such refresh token found");
+}
+
 export async function tokenForSupabaseAccount(accountId: string): Promise<string> {
   const db = adminClient();
   const { data: account, error } = await db.from("supabase_account")

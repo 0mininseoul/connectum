@@ -8,6 +8,7 @@ enum Palette {
     static let surface         = Color.adaptive(light: "FFFFFF", dark: "0D0D0D", lightOpacity: 0.58, darkOpacity: 0.58)
     static let surfaceElevated = Color.adaptive(light: "FFFFFF", dark: "101111", lightOpacity: 0.78, darkOpacity: 0.72)
     static let surfaceCard     = Color.adaptive(light: "FFFFFF", dark: "121212", lightOpacity: 0.72, darkOpacity: 0.66)
+    static let inspectorSurface = Color.adaptive(light: "F6F7F9", dark: "0A0B0D")
     static let sidebarOverlay  = Color.adaptive(light: "FFFFFF", dark: "000000", lightOpacity: 0.58, darkOpacity: 0.54)
     // Text
     static let ink      = Color.adaptive(light: "17191C", dark: "F4F4F6")

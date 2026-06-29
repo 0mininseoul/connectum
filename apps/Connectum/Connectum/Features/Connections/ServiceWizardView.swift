@@ -2,6 +2,11 @@ import AppKit
 import SwiftUI
 import Observation
 
+enum SupabaseOAuthLaunchMode {
+    case openBrowser
+    case copyLink
+}
+
 @MainActor
 @Observable
 final class ServiceWizardViewModel {
@@ -24,10 +29,51 @@ final class ServiceWizardViewModel {
     var axiomDataset: String?
     var status: String?
     var isBusy = false
+    var isSupabaseOAuthWaiting = false
     var createdServiceId: String?
     var needsSupabaseReauthorization = false
     private let repo: CrmDataProviding
-    init(repo: CrmDataProviding = CrmRepository()) { self.repo = repo }
+    private let supportsSupabaseOAuth: Bool
+    private var supabaseOAuthAttemptID: UUID?
+    private var supabaseOAuthReceiver: SupabaseOAuthLoopbackReceiver?
+
+    init(repo: CrmDataProviding = CrmRepository()) {
+        self.repo = repo
+        self.supportsSupabaseOAuth = true
+    }
+
+    var canUseSupabaseOAuth: Bool { supportsSupabaseOAuth }
+
+    private func beginSupabaseOAuthAttempt() -> UUID {
+        supabaseOAuthReceiver?.cancel()
+        let attemptID = UUID()
+        supabaseOAuthAttemptID = attemptID
+        supabaseOAuthReceiver = nil
+        isSupabaseOAuthWaiting = true
+        isBusy = true
+        return attemptID
+    }
+
+    private func bindSupabaseOAuthReceiver(_ receiver: SupabaseOAuthLoopbackReceiver, to attemptID: UUID) {
+        guard supabaseOAuthAttemptID == attemptID else {
+            receiver.cancel()
+            return
+        }
+        supabaseOAuthReceiver = receiver
+    }
+
+    private func finishSupabaseOAuthAttempt(_ attemptID: UUID) {
+        guard supabaseOAuthAttemptID == attemptID else { return }
+        supabaseOAuthReceiver?.cancel()
+        supabaseOAuthReceiver = nil
+        supabaseOAuthAttemptID = nil
+        isSupabaseOAuthWaiting = false
+        isBusy = false
+    }
+
+    private func isSupersededSupabaseOAuthAttempt(_ attemptID: UUID) -> Bool {
+        supabaseOAuthAttemptID != attemptID
+    }
 
     func load() async {
         do {
@@ -62,6 +108,7 @@ final class ServiceWizardViewModel {
         userTableId = nil
         columns = []
         displayCols = []
+        resetIdentityColumnSelection()
         needsSupabaseReauthorization = false
         if let ref, let p = projects.first(where: { $0.ref == ref }), (name.isEmpty || name == "새 서비스" || projects.contains { $0.name == name }) {
             name = p.name
@@ -91,6 +138,7 @@ final class ServiceWizardViewModel {
         userTableId = nil
         columns = []
         displayCols = []
+        resetIdentityColumnSelection()
         status = nil
     }
 
@@ -129,13 +177,15 @@ final class ServiceWizardViewModel {
         userTableId = id
         displayCols = []
         columns = []
+        resetIdentityColumnSelection()
         guard let a = selectedAccountId, let p = selectedProjectRef, let t = tables.first(where: { $0.id == id }) else { return }
         isBusy = true; defer { isBusy = false }
         do {
             columns = try await repo.listColumns(supabaseAccountId: a, projectRef: p, schema: t.schema, table: t.table)
+            alignIdentityColumnSelection()
             needsSupabaseReauthorization = false
-            status = "컬럼 \(columns.count)개"
-            if columns.contains(where: { $0.column == emailCol }) { displayCols.insert(emailCol) }
+            status = nil
+            if !emailCol.isEmpty, columns.contains(where: { $0.column == emailCol }) { displayCols.insert(emailCol) }
             if columns.contains(where: { $0.column == "name" }) { displayCols.insert("name") }
         } catch CrmRepositoryError.supabaseReauthorizationRequired {
             needsSupabaseReauthorization = true
@@ -143,10 +193,22 @@ final class ServiceWizardViewModel {
         } catch { status = "컬럼 로드 실패: \(error)" }
     }
 
-    func reconnectSupabaseOAuth() async {
-        isBusy = true; defer { isBusy = false }
+    func reconnectSupabaseOAuth(_ launchMode: SupabaseOAuthLaunchMode = .openBrowser) async {
+        guard canUseSupabaseOAuth else {
+            status = "현재 버전에서는 Supabase 자동 OAuth가 아직 설정되지 않았습니다. 연동 탭에서 PAT로 Supabase를 다시 연결하세요."
+            return
+        }
+        guard !isBusy || isSupabaseOAuthWaiting else {
+            status = "진행 중인 작업이 끝난 뒤 다시 시도하세요."
+            return
+        }
+
+        let attemptID = beginSupabaseOAuthAttempt()
+        defer { finishSupabaseOAuthAttempt(attemptID) }
+
         let previousAccountIds = Set(supabaseAccounts.map(\.id))
         let receiver = SupabaseOAuthLoopbackReceiver()
+        bindSupabaseOAuthReceiver(receiver, to: attemptID)
         do {
             let port = try SupabaseOAuthLoopbackReceiver.availablePort()
             let loopbackURL = SupabaseOAuthFlow.redirectURI(port: port)
@@ -155,15 +217,28 @@ final class ServiceWizardViewModel {
             let callbackTask = Task {
                 try await receiver.waitForCallback(expectedState: state, port: port)
             }
-            guard NSWorkspace.shared.open(authorizeURL) else {
-                receiver.cancel()
-                callbackTask.cancel()
-                status = "브라우저를 열 수 없습니다."
-                return
+            switch launchMode {
+            case .openBrowser:
+                guard NSWorkspace.shared.open(authorizeURL) else {
+                    receiver.cancel()
+                    callbackTask.cancel()
+                    status = "브라우저를 열 수 없습니다."
+                    return
+                }
+                status = "Supabase 승인 대기 중"
+            case .copyLink:
+                let pasteboard = NSPasteboard.general
+                pasteboard.clearContents()
+                guard pasteboard.setString(authorizeURL.absoluteString, forType: .string) else {
+                    receiver.cancel()
+                    callbackTask.cancel()
+                    status = "인증 링크를 복사할 수 없습니다."
+                    return
+                }
+                status = "인증 링크를 복사했습니다. 다른 브라우저나 시크릿 창에서 승인하세요."
             }
             let callback = try await callbackTask.value
             try await repo.connectSupabaseOAuth(code: callback.code, state: callback.state)
-            receiver.cancel()
             projects = []
             resetProjectAndTableSelection()
             needsSupabaseReauthorization = false
@@ -173,10 +248,26 @@ final class ServiceWizardViewModel {
                 ?? selectedAccountId
             status = "Supabase 권한 승인됨"
             await loadProjects()
+        } catch is CancellationError {
+            if !isSupersededSupabaseOAuthAttempt(attemptID) {
+                status = "Supabase 승인이 취소되었습니다. 다시 시도하세요."
+            }
         } catch {
-            receiver.cancel()
-            status = "Supabase 승인 실패: \(error.localizedDescription)"
+            if !isSupersededSupabaseOAuthAttempt(attemptID) {
+                status = "Supabase 승인 실패: \(friendlySupabaseOAuthError(error))"
+            }
         }
+    }
+
+    private func friendlySupabaseOAuthError(_ error: Error) -> String {
+        let message = error.localizedDescription
+        if message.contains("브리지")
+            || message.localizedCaseInsensitiveContains("oauth bridge")
+            || message.localizedCaseInsensitiveContains("Connectum Supabase OAuth client is not configured")
+            || message.localizedCaseInsensitiveContains("OAuth broker 설정") {
+            return "Connectum OAuth 서버에 Supabase OAuth 앱 설정이 필요합니다. 연동 탭에서 다시 연결하세요."
+        }
+        return message
     }
 
     func create() async -> String? {
@@ -186,6 +277,10 @@ final class ServiceWizardViewModel {
         }
         guard userTableId != nil else {
             status = "유저 테이블 필요"
+            return nil
+        }
+        if let validationMessage = userTableColumnValidationMessage() {
+            status = validationMessage
             return nil
         }
         isBusy = true; defer { isBusy = false }
@@ -237,6 +332,7 @@ final class ServiceWizardViewModel {
             amplitudeId = nil
             axiomId = nil
             axiomDataset = nil
+            resetIdentityColumnSelection()
             return createdName
         } catch {
             status = "생성 실패: \(error)"
@@ -264,6 +360,13 @@ final class ServiceWizardViewModel {
         return axiomAccounts.first { $0.id == axiomId }
     }
 
+    var canCreateService: Bool {
+        !isBusy
+            && !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && userTableId != nil
+            && userTableColumnValidationMessage() == nil
+    }
+
     func alignAxiomDataset() {
         let datasets = selectedAxiomAccount?.datasets ?? []
         if axiomId == nil {
@@ -282,7 +385,56 @@ final class ServiceWizardViewModel {
         userTableId = nil
         columns = []
         displayCols = []
+        resetIdentityColumnSelection()
         needsSupabaseReauthorization = false
+    }
+
+    private func resetIdentityColumnSelection() {
+        userIdCol = "id"
+        emailCol = "email"
+    }
+
+    private func alignIdentityColumnSelection() {
+        let names = Set(columns.map(\.column))
+        if userIdCol.isEmpty || !names.contains(userIdCol) {
+            userIdCol = Self.preferredUserIdColumn(in: columns) ?? ""
+        }
+        if !emailCol.isEmpty, !names.contains(emailCol) {
+            emailCol = Self.preferredEmailColumn(in: columns) ?? ""
+        }
+    }
+
+    private func userTableColumnValidationMessage() -> String? {
+        let names = Set(columns.map(\.column))
+        guard !columns.isEmpty else {
+            return "유저 테이블 컬럼을 불러온 뒤 다시 시도하세요."
+        }
+        guard !userIdCol.isEmpty, names.contains(userIdCol) else {
+            return "고유 ID 컬럼을 선택하세요."
+        }
+        if !emailCol.isEmpty, !names.contains(emailCol) {
+            return "이메일 컬럼이 현재 테이블에 없습니다."
+        }
+        return nil
+    }
+
+    private static func preferredUserIdColumn(in columns: [ColumnInfo]) -> String? {
+        preferredColumn(named: ["id", "user_id", "userId", "uid", "uuid"], in: columns)
+            ?? columns.first { $0.type.localizedCaseInsensitiveContains("uuid") }?.column
+            ?? columns.first?.column
+    }
+
+    private static func preferredEmailColumn(in columns: [ColumnInfo]) -> String? {
+        preferredColumn(named: ["email", "email_address", "user_email"], in: columns)
+    }
+
+    private static func preferredColumn(named candidates: [String], in columns: [ColumnInfo]) -> String? {
+        for candidate in candidates {
+            if let match = columns.first(where: { $0.column.caseInsensitiveCompare(candidate) == .orderedSame }) {
+                return match.column
+            }
+        }
+        return nil
     }
 }
 
@@ -326,9 +478,9 @@ private enum ServiceWizardStep {
     var subtitle: String {
         switch self {
         case .connectSupabase:
-            return "운영 DB 원본이 되는 Supabase 계정을 먼저 연결합니다."
+            return "브라우저에서 기존 Supabase 프로젝트에 접근할 계정을 연결합니다."
         case .reauthorizeSupabase:
-            return "테이블 목록을 읽으려면 Supabase에서 데이터베이스 접근 권한을 승인해야 합니다."
+            return "저장된 Supabase 토큰으로 테이블 목록을 읽을 수 없습니다. 브라우저에서 권한을 다시 승인하세요."
         case .loadingProjects, .loadProjects:
             return "연결된 Supabase 계정에서 프로젝트 목록을 가져옵니다."
         case .chooseProject:
@@ -347,20 +499,24 @@ private enum ServiceWizardStep {
 
 struct ServiceWizardView: View {
     let draftService: Service?
+    let viewportHeight: CGFloat?
     let onCreated: (String) async -> Void
 
     @State private var vm = ServiceWizardViewModel()
     @State private var showDisplayColumnOptions = false
     @State private var showIdentityColumnOptions = false
     @State private var briefTarget: BriefTarget?
+    @State private var showSupabaseAccountChoice = false
 
     private struct BriefTarget: Identifiable { let id: String }
 
     init(
         draftService: Service? = nil,
+        viewportHeight: CGFloat? = nil,
         onCreated: @escaping (String) async -> Void = { _ in }
     ) {
         self.draftService = draftService
+        self.viewportHeight = viewportHeight
         self.onCreated = onCreated
     }
 
@@ -387,31 +543,33 @@ struct ServiceWizardView: View {
         .sheet(item: $briefTarget) { target in
             ServiceBriefView(serviceId: target.id)
         }
+        .sheet(isPresented: $showSupabaseAccountChoice) {
+            supabaseAccountChoiceSheet
+        }
     }
 
     private var stepHeader: some View {
-        HStack(alignment: .center, spacing: Spacing.md) {
-            Image(systemName: activeStep.icon)
-                .font(.system(size: 18, weight: .semibold))
-                .foregroundStyle(Palette.accentBlue)
-                .frame(width: 34, height: 34)
-                .background(Palette.surfaceElevated)
-                .clipShape(RoundedRectangle(cornerRadius: Radius.badge))
-            VStack(alignment: .leading, spacing: Spacing.xs) {
-                Text(activeStep.title)
-                    .font(Typography.cardTitle)
-                    .foregroundStyle(Palette.ink)
-                Text(activeStep.subtitle)
-                    .font(Typography.caption)
-                    .foregroundStyle(Palette.muted)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer()
-            if let status = vm.status {
-                Text(status)
-                    .font(Typography.caption)
+        VStack(alignment: .leading, spacing: Spacing.md) {
+            HStack(alignment: .center, spacing: Spacing.md) {
+                Image(systemName: activeStep.icon)
+                    .font(.system(size: 18, weight: .semibold))
                     .foregroundStyle(Palette.accentBlue)
-                    .lineLimit(1)
+                    .frame(width: 34, height: 34)
+                    .background(Palette.surfaceElevated)
+                    .clipShape(RoundedRectangle(cornerRadius: Radius.badge))
+                VStack(alignment: .leading, spacing: Spacing.xs) {
+                    Text(activeStep.title)
+                        .font(Typography.cardTitle)
+                        .foregroundStyle(Palette.ink)
+                    Text(activeStep.subtitle)
+                        .font(Typography.caption)
+                        .foregroundStyle(Palette.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+            }
+            if let status = vm.status {
+                ConnectionStatusNotice(text: status)
             }
         }
     }
@@ -419,17 +577,22 @@ struct ServiceWizardView: View {
     @ViewBuilder private var currentStep: some View {
         switch activeStep {
         case .connectSupabase:
-            emptyState(
-                title: "Supabase 연결이 필요합니다",
-                detail: "먼저 Supabase 계정을 연결하면 프로젝트를 선택할 수 있습니다.",
-                systemImage: "link"
-            )
+            singleActionState(
+                title: "Supabase 계정을 연결하세요",
+                detail: "브라우저에서 Supabase 접근을 승인하면 프로젝트를 선택할 수 있습니다.",
+                buttonTitle: vm.isSupabaseOAuthWaiting ? "다시 시도" : "Supabase로 계속",
+                systemImage: vm.isSupabaseOAuthWaiting ? "arrow.clockwise" : "person.crop.circle.badge.checkmark",
+                allowsBusyAction: vm.isSupabaseOAuthWaiting
+            ) {
+                Task { await vm.reconnectSupabaseOAuth() }
+            }
         case .reauthorizeSupabase:
             singleActionState(
                 title: "Supabase 권한을 다시 승인하세요",
                 detail: "프로젝트는 보이지만 테이블 목록을 읽을 권한이 부족합니다. 브라우저에서 한 번만 다시 승인하면 이어서 진행됩니다.",
-                buttonTitle: vm.isBusy ? "브라우저 대기 중" : "브라우저에서 승인",
-                systemImage: "safari"
+                buttonTitle: vm.isSupabaseOAuthWaiting ? "다시 승인 열기" : "브라우저에서 승인",
+                systemImage: vm.isSupabaseOAuthWaiting ? "arrow.clockwise" : "safari",
+                allowsBusyAction: vm.isSupabaseOAuthWaiting
             ) {
                 Task { await vm.reconnectSupabaseOAuth() }
             }
@@ -466,16 +629,74 @@ struct ServiceWizardView: View {
         }
     }
 
+    private var supabaseAccountChoiceSheet: some View {
+        VStack(alignment: .leading, spacing: Spacing.lg) {
+            HStack(alignment: .center, spacing: Spacing.md) {
+                Image(systemName: "person.badge.plus")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(Palette.accentBlue)
+                    .frame(width: 34, height: 34)
+                    .background(Palette.surfaceElevated)
+                    .clipShape(RoundedRectangle(cornerRadius: Radius.badge))
+                VStack(alignment: .leading, spacing: Spacing.xs) {
+                    Text("Supabase 계정 추가")
+                        .font(Typography.cardTitle)
+                        .foregroundStyle(Palette.ink)
+                    Text("다른 계정으로 승인할 방법을 선택하세요.")
+                        .font(Typography.caption)
+                        .foregroundStyle(Palette.muted)
+                }
+            }
+
+            Text("Supabase 인증 화면은 현재 브라우저의 로그인 세션을 그대로 사용할 수 있습니다. 새 계정을 연결하려면 인증 링크를 복사해 다른 브라우저, 프로필, 또는 시크릿 창에서 여는 방식이 가장 확실합니다.")
+                .font(Typography.caption)
+                .foregroundStyle(Palette.body)
+                .fixedSize(horizontal: false, vertical: true)
+                .lineSpacing(2)
+
+            HStack(spacing: Spacing.sm) {
+                Button("취소", role: .cancel) {
+                    showSupabaseAccountChoice = false
+                }
+                Spacer(minLength: Spacing.md)
+                Button {
+                    launchSupabaseOAuth(.openBrowser)
+                } label: {
+                    Label("브라우저 열기", systemImage: "safari")
+                }
+                .buttonStyle(.bordered)
+                Button {
+                    launchSupabaseOAuth(.copyLink)
+                } label: {
+                    Label("링크 복사", systemImage: "doc.on.doc")
+                }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+            }
+            .controlSize(.large)
+        }
+        .padding(Spacing.xl)
+        .frame(width: 500, alignment: .leading)
+        .background(Palette.surfaceCard)
+    }
+
+    private func launchSupabaseOAuth(_ launchMode: SupabaseOAuthLaunchMode) {
+        showSupabaseAccountChoice = false
+        Task { await vm.reconnectSupabaseOAuth(launchMode) }
+    }
+
     private var projectList: some View {
         VStack(alignment: .leading, spacing: Spacing.md) {
             accountContextBar
-            ForEach(vm.projects) { project in
-                choiceRow(
-                    title: project.name,
-                    detail: project.ref,
-                    systemImage: "shippingbox"
-                ) {
-                    Task { await vm.chooseProject(project.ref) }
+            scrollableChoiceList {
+                ForEach(vm.projects) { project in
+                    choiceRow(
+                        title: project.name,
+                        detail: project.ref,
+                        systemImage: "shippingbox"
+                    ) {
+                        Task { await vm.chooseProject(project.ref) }
+                    }
                 }
             }
         }
@@ -484,32 +705,178 @@ struct ServiceWizardView: View {
     private var userTableList: some View {
         VStack(alignment: .leading, spacing: Spacing.md) {
             projectContextBar
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: Spacing.xs) {
-                    ForEach(vm.tables) { table in
-                        choiceRow(
-                            title: table.table,
-                            detail: table.schema,
-                            systemImage: "tablecells"
-                        ) {
-                            Task { await vm.selectUserTable(table.id) }
+            scrollableChoiceList {
+                ForEach(vm.tables) { table in
+                    choiceRow(
+                        title: table.table,
+                        detail: table.schema,
+                        systemImage: "tablecells"
+                    ) {
+                        Task { await vm.selectUserTable(table.id) }
+                    }
+                }
+            }
+        }
+    }
+
+    private func scrollableChoiceList<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: Spacing.xs) {
+                content()
+            }
+            .padding(.vertical, 1)
+        }
+        .scrollContentBackground(.hidden)
+        .frame(maxWidth: .infinity, maxHeight: choiceListMaxHeight, alignment: .topLeading)
+    }
+
+    private var choiceListMaxHeight: CGFloat {
+        guard let viewportHeight else { return 360 }
+        return min(360, max(240, viewportHeight - 320))
+    }
+
+    private func createServiceStep() -> some View {
+        VStack(alignment: .leading, spacing: Spacing.lg) {
+            createServicePrompt
+            sourceSummaryPanel
+            advancedSetupSection
+            createServiceActionPanel
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var createServicePrompt: some View {
+        HStack(alignment: .top, spacing: Spacing.md) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 22, weight: .semibold))
+                .foregroundStyle(Palette.accentGreen)
+                .frame(width: 28, height: 28)
+            VStack(alignment: .leading, spacing: Spacing.xs) {
+                Text("운영 DB 기준이 정해졌습니다")
+                    .font(Typography.cardTitle)
+                    .foregroundStyle(Palette.ink)
+                Text("선택한 Supabase 프로젝트와 유저 테이블로 서비스를 만들 수 있습니다.")
+                    .font(Typography.body)
+                    .foregroundStyle(Palette.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
+    private var sourceSummaryPanel: some View {
+        VStack(alignment: .leading, spacing: Spacing.lg) {
+            HStack(alignment: .center, spacing: Spacing.md) {
+                Label("선택 완료", systemImage: "checkmark.circle.fill")
+                    .font(Typography.caption)
+                    .foregroundStyle(Palette.accentGreen)
+                    .padding(.horizontal, Spacing.sm)
+                    .frame(height: 28)
+                    .background(Palette.accentGreen.opacity(0.10))
+                    .clipShape(RoundedRectangle(cornerRadius: Radius.button))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(vm.selectedProject?.name ?? "프로젝트 미선택")
+                        .font(Typography.body.weight(.semibold))
+                        .foregroundStyle(Palette.ink)
+                        .lineLimit(1)
+                    Text(selectedUserTable.map { "\($0.schema).\($0.table)" } ?? "유저 테이블 미선택")
+                        .font(Typography.caption)
+                        .foregroundStyle(Palette.muted)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: Spacing.md)
+                HStack(spacing: Spacing.sm) {
+                    secondaryButton(title: "테이블 변경", systemImage: "tablecells") {
+                        withAnimation {
+                            vm.userTableId = nil
+                            vm.columns = []
+                        }
+                    }
+                    secondaryButton(title: "프로젝트 변경", systemImage: "shippingbox") {
+                        withAnimation {
+                            vm.selectedProjectRef = nil
+                            vm.tables = []
+                            vm.userTableId = nil
+                            vm.columns = []
                         }
                     }
                 }
             }
-            .frame(maxHeight: 440)
+
+            Divider()
+
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: 230), spacing: Spacing.xl, alignment: .leading)],
+                alignment: .leading,
+                spacing: Spacing.md
+            ) {
+                sourceSummaryItem(
+                    icon: "rectangle.stack",
+                    title: "서비스",
+                    value: vm.name.isEmpty ? (vm.selectedProject?.name ?? "새 서비스") : vm.name
+                )
+                sourceSummaryItem(
+                    icon: "shippingbox",
+                    title: "프로젝트",
+                    value: vm.selectedProject?.name ?? "프로젝트 미선택"
+                )
+                sourceSummaryItem(
+                    icon: "tablecells",
+                    title: "유저 테이블",
+                    value: selectedUserTable.map { "\($0.schema).\($0.table)" } ?? "테이블 미선택"
+                )
+                sourceSummaryItem(
+                    icon: "person.crop.circle",
+                    title: "Supabase 계정",
+                    value: selectedAccountLabel ?? "Supabase"
+                )
+                sourceSummaryItem(
+                    icon: "sidebar.leading",
+                    title: "초기 컬럼",
+                    value: "\(vm.columns.count)개"
+                )
+            }
+        }
+        .padding(Spacing.lg)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Palette.surfaceElevated)
+        .clipShape(RoundedRectangle(cornerRadius: Radius.card))
+        .overlay(RoundedRectangle(cornerRadius: Radius.card).stroke(Palette.hairline))
+    }
+
+    private func sourceSummaryItem(icon: String, title: String, value: String) -> some View {
+        HStack(alignment: .top, spacing: Spacing.sm) {
+            Image(systemName: icon)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Palette.accentBlue)
+                .frame(width: 20, height: 20)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(Typography.caption)
+                    .foregroundStyle(Palette.muted)
+                Text(value)
+                    .font(Typography.body)
+                    .foregroundStyle(Palette.ink)
+                    .lineLimit(1)
+            }
         }
     }
 
-    private func createServiceStep() -> some View {
+    private var advancedSetupSection: some View {
         @Bindable var vm = vm
         return VStack(alignment: .leading, spacing: Spacing.md) {
-            serviceReviewCard
-            optionalConnectionsSection
+            VStack(alignment: .leading, spacing: Spacing.xs) {
+                Text("고급 설정")
+                    .font(Typography.body.weight(.semibold))
+                    .foregroundStyle(Palette.ink)
+                Text("기본값이 맞지 않을 때만 바꾸세요.")
+                    .font(Typography.caption)
+                    .foregroundStyle(Palette.muted)
+            }
 
             disclosureSection("유저 식별 기준", isExpanded: $showIdentityColumnOptions) {
                 VStack(alignment: .leading, spacing: Spacing.sm) {
-                    Text("각 행을 어떤 유저로 볼지 정하는 기준입니다. 기본값이 맞지 않을 때만 바꾸세요.")
+                    Text("각 행을 어떤 유저로 볼지 정하는 기준입니다.")
                         .font(Typography.caption)
                         .foregroundStyle(Palette.muted)
                         .fixedSize(horizontal: false, vertical: true)
@@ -529,9 +896,11 @@ struct ServiceWizardView: View {
                 .padding(.top, Spacing.sm)
             }
 
-            disclosureSection("표시 컬럼 조정", isExpanded: $showDisplayColumnOptions) {
+            Divider()
+
+            disclosureSection("초기 표시 컬럼", isExpanded: $showDisplayColumnOptions) {
                 VStack(alignment: .leading, spacing: Spacing.sm) {
-                    Text("운영 DB 테이블에 처음 보여줄 컬럼입니다. 생성 후에도 컬럼 메뉴에서 다시 바꿀 수 있습니다.")
+                    Text("운영 DB 테이블에 처음 보여줄 컬럼입니다. 생성 후에도 컬럼 메뉴에서 바꿀 수 있습니다.")
                         .font(Typography.caption)
                         .foregroundStyle(Palette.muted)
                         .fixedSize(horizontal: false, vertical: true)
@@ -557,7 +926,26 @@ struct ServiceWizardView: View {
                 }
                 .padding(.top, Spacing.sm)
             }
+        }
+        .padding(Spacing.lg)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Palette.surfaceElevated)
+        .clipShape(RoundedRectangle(cornerRadius: Radius.card))
+        .overlay(RoundedRectangle(cornerRadius: Radius.card).stroke(Palette.hairline))
+    }
 
+    private var createServiceActionPanel: some View {
+        HStack(alignment: .center, spacing: Spacing.lg) {
+            VStack(alignment: .leading, spacing: Spacing.xs) {
+                Text("이 설정으로 서비스 생성")
+                    .font(Typography.body.weight(.semibold))
+                    .foregroundStyle(Palette.ink)
+                Text("생성 후 운영 DB와 대시보드에서 데이터를 확인할 수 있습니다.")
+                    .font(Typography.caption)
+                    .foregroundStyle(Palette.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: Spacing.md)
             primaryButton(
                 title: vm.isBusy ? "생성 중" : "서비스 만들기",
                 systemImage: "checkmark"
@@ -570,106 +958,14 @@ struct ServiceWizardView: View {
                     }
                 }
             }
-            .disabled(vm.isBusy || vm.name.isEmpty || vm.userTableId == nil)
+            .disabled(!vm.canCreateService)
+            .frame(width: 180)
         }
-    }
-
-    private var serviceReviewCard: some View {
-        VStack(alignment: .leading, spacing: Spacing.md) {
-            selectedServiceContextBar
-            VStack(alignment: .leading, spacing: Spacing.sm) {
-                reviewRow(
-                    icon: "rectangle.stack",
-                    title: "서비스",
-                    value: vm.name.isEmpty ? (vm.selectedProject?.name ?? "새 서비스") : vm.name
-                )
-                reviewRow(
-                    icon: "shippingbox",
-                    title: "프로젝트",
-                    value: vm.selectedProject?.name ?? "프로젝트 미선택"
-                )
-                if let table = selectedUserTable {
-                    reviewRow(
-                        icon: "tablecells",
-                        title: "유저 테이블",
-                        value: "\(table.schema).\(table.table)"
-                    )
-                }
-                reviewRow(
-                    icon: "person.crop.circle",
-                    title: "Supabase 계정",
-                    value: selectedAccountLabel ?? "계정 미선택"
-                )
-            }
-        }
-        .padding(Spacing.md)
+        .padding(Spacing.lg)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(Palette.surfaceElevated)
         .clipShape(RoundedRectangle(cornerRadius: Radius.card))
         .overlay(RoundedRectangle(cornerRadius: Radius.card).stroke(Palette.hairline))
-    }
-
-    private func reviewRow(icon: String, title: String, value: String) -> some View {
-        HStack(spacing: Spacing.sm) {
-            Image(systemName: icon)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(Palette.accentBlue)
-                .frame(width: 20)
-            Text(title)
-                .font(Typography.caption)
-                .foregroundStyle(Palette.muted)
-                .frame(width: 92, alignment: .leading)
-            Text(value)
-                .font(Typography.body)
-                .foregroundStyle(Palette.ink)
-                .lineLimit(1)
-            Spacer(minLength: Spacing.sm)
-        }
-    }
-
-    private var optionalConnectionsSection: some View {
-        @Bindable var vm = vm
-        return VStack(alignment: .leading, spacing: Spacing.sm) {
-            Text("선택 연동")
-                .font(Typography.body)
-                .foregroundStyle(Palette.ink)
-            if vm.amplitudeAccounts.isEmpty && vm.axiomAccounts.isEmpty {
-                Text("연결된 Amplitude/Axiom 계정이 없습니다. 서비스 생성 후 연동 탭에서 추가할 수 있습니다.")
-                    .font(Typography.caption)
-                    .foregroundStyle(Palette.muted)
-                    .fixedSize(horizontal: false, vertical: true)
-            } else {
-                HStack(alignment: .top, spacing: Spacing.md) {
-                    optionalAccountSelector(
-                        title: "Amplitude",
-                        accounts: vm.amplitudeAccounts,
-                        selection: $vm.amplitudeId
-                    )
-                    VStack(alignment: .leading, spacing: Spacing.xs) {
-                        optionalAccountSelector(
-                            title: "Axiom",
-                            accounts: vm.axiomAccounts,
-                            selection: $vm.axiomId
-                        )
-                        if let axiom = vm.selectedAxiomAccount, let datasets = axiom.datasets, !datasets.isEmpty {
-                            Picker("", selection: $vm.axiomDataset) {
-                                ForEach(datasets, id: \.self) { dataset in
-                                    Text(dataset).tag(Optional(dataset))
-                                }
-                            }
-                            .labelsHidden()
-                            .pickerStyle(.menu)
-                            .frame(maxWidth: 240, alignment: .leading)
-                        }
-                    }
-                    .frame(maxWidth: 240, alignment: .leading)
-                }
-            }
-        }
-        .padding(Spacing.md)
-        .background(Palette.surfaceElevated)
-        .clipShape(RoundedRectangle(cornerRadius: Radius.card))
-        .overlay(RoundedRectangle(cornerRadius: Radius.card).stroke(Palette.hairline))
-        .onChange(of: vm.axiomId) { _, _ in vm.alignAxiomDataset() }
     }
 
     private var activeStep: ServiceWizardStep {
@@ -725,6 +1021,7 @@ struct ServiceWizardView: View {
         detail: String,
         buttonTitle: String,
         systemImage: String,
+        allowsBusyAction: Bool = false,
         action: @escaping () -> Void
     ) -> some View {
         VStack(alignment: .leading, spacing: Spacing.md) {
@@ -738,7 +1035,7 @@ struct ServiceWizardView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             primaryButton(title: buttonTitle, systemImage: systemImage, action: action)
-                .disabled(vm.isBusy)
+                .disabled(vm.isBusy && !allowsBusyAction)
         }
     }
 
@@ -835,14 +1132,19 @@ struct ServiceWizardView: View {
                                 Text(displayName(for: account))
                             }
                         }
+                        .disabled(vm.isBusy)
                     }
                 }
             }
             Button {
-                Task { await vm.reconnectSupabaseOAuth() }
+                showSupabaseAccountChoice = true
             } label: {
-                Label("다른 Supabase 계정 연결", systemImage: "person.badge.plus")
+                Label(
+                    vm.isSupabaseOAuthWaiting ? "Supabase 승인 다시 열기" : "Supabase 계정 추가",
+                    systemImage: vm.isSupabaseOAuthWaiting ? "arrow.clockwise" : "person.crop.circle.badge.checkmark"
+                )
             }
+            .disabled(vm.isBusy && !vm.isSupabaseOAuthWaiting)
             if vm.selectedAccountId != nil {
                 Divider()
                 Button(role: .destructive) {
@@ -850,6 +1152,7 @@ struct ServiceWizardView: View {
                 } label: {
                     Label("현재 계정 연결 해제", systemImage: "trash")
                 }
+                .disabled(vm.isBusy)
             }
         } label: {
             Label("계정 변경", systemImage: "person.crop.circle")
@@ -858,7 +1161,7 @@ struct ServiceWizardView: View {
         }
         .menuStyle(.button)
         .fixedSize()
-        .disabled(vm.isBusy)
+        .disabled(vm.isBusy && !vm.isSupabaseOAuthWaiting)
     }
 
     private func choiceRow(
@@ -1015,28 +1318,6 @@ struct ServiceWizardView: View {
                 content()
             }
         }
-    }
-
-    private func optionalAccountSelector(
-        title: String,
-        accounts: [ConnAccount],
-        selection: Binding<String?>
-    ) -> some View {
-        VStack(alignment: .leading, spacing: Spacing.xs) {
-            Text(title)
-                .font(Typography.caption)
-                .foregroundStyle(Palette.body)
-            Picker("", selection: selection) {
-                Text("연동 안 함").tag(nil as String?)
-                ForEach(accounts) { account in
-                    Text(displayName(for: account)).tag(Optional(account.id))
-                }
-            }
-            .labelsHidden()
-            .pickerStyle(.menu)
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .frame(maxWidth: 240, alignment: .leading)
     }
 
     @ViewBuilder private func formField(_ title: String, text: Binding<String>) -> some View {

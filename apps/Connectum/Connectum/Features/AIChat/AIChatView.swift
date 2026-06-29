@@ -15,6 +15,8 @@ struct AIChatView: View {
             Divider().overlay(Palette.hairline)
             if !vm.connected {
                 notConnected
+            } else if serviceId == nil {
+                noServiceSelected
             } else {
                 if briefEmpty { briefBanner }
                 messagesList
@@ -49,7 +51,7 @@ struct AIChatView: View {
         focusTask = Task { @MainActor in
             for _ in 0 ..< 12 {
                 if Task.isCancelled { return }
-                if vm.connected { inputFocused = true }
+                if vm.connected && serviceId != nil { inputFocused = true }
                 try? await Task.sleep(for: .milliseconds(50))
                 if inputFocused { return }
             }
@@ -188,8 +190,8 @@ struct AIChatView: View {
     private var notConnected: some View {
         VStack(spacing: Spacing.md) {
             ClaudeMark(size: 30)
-            Text("Claude 계정을 연결하세요").font(Typography.body).foregroundStyle(Palette.ink)
-            Text("연동 탭에서 Claude(AI)를 연결하면 데이터에 대해 대화할 수 있어요.")
+            Text("AI 채팅 비활성화").font(Typography.body).foregroundStyle(Palette.ink)
+            Text("연동 탭에서 Claude 계정을 연결하세요.")
                 .font(Typography.caption).foregroundStyle(Palette.muted)
                 .multilineTextAlignment(.center)
             Button { Task { await vm.refreshConnection() } } label: {
@@ -199,6 +201,24 @@ struct AIChatView: View {
             .buttonStyle(.plain)
         }
         .padding(Spacing.xl).frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var noServiceSelected: some View {
+        VStack(spacing: Spacing.md) {
+            Image(systemName: "cylinder.split.1x2")
+                .font(.system(size: 30, weight: .regular))
+                .foregroundStyle(Palette.muted)
+            Text("서비스 연결 필요")
+                .font(Typography.body)
+                .foregroundStyle(Palette.ink)
+            Text("AI 채팅은 선택된 서비스의 로컬 데이터로 답합니다. Supabase 원본을 연결하고 서비스를 만든 뒤 다시 열어주세요.")
+                .font(Typography.caption)
+                .foregroundStyle(Palette.muted)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(Spacing.xl)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 

@@ -271,18 +271,21 @@ struct DashboardView: View {
                     .frame(height: 140, alignment: .center)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 } else {
-                    Chart(points) { point in
-                        LineMark(x: .value("날짜", point.date), y: .value("값", point.value))
-                            .foregroundStyle(Palette.accentBlue)
-                        AreaMark(x: .value("날짜", point.date), y: .value("값", point.value))
-                            .foregroundStyle(Palette.accentBlue.opacity(0.16))
-                    }
-                    .chartXAxis { AxisMarks(values: .automatic(desiredCount: 4)) }
-                    .chartYAxis { AxisMarks(values: .automatic(desiredCount: 4)) }
+                    DashboardChartView(
+                        points: points,
+                        valueText: { chartValueText($0, for: definition) }
+                    )
                     .frame(height: 180)
                 }
             }
         }
+    }
+
+    private func chartValueText(_ value: Double, for definition: DashboardKPIDefinition) -> String {
+        if definition.kind == .contactRate || definition.unit == "percent" {
+            return String(format: "%.0f%%", value)
+        }
+        return "\(Int(value.rounded()))명"
     }
 
     private func handleDrop(_ providers: [NSItemProvider], target: DashboardKPIDefinition) -> Bool {
@@ -309,6 +312,139 @@ struct DashboardView: View {
         .clipShape(RoundedRectangle(cornerRadius: Radius.card))
         .overlay(RoundedRectangle(cornerRadius: Radius.card).stroke(Palette.hairline))
     }
+}
+
+private struct DashboardChartView: View {
+    let points: [DashboardKPIChartPoint]
+    let valueText: (Double) -> String
+    @State private var hoveredPoint: DashboardKPIChartPoint?
+
+    var body: some View {
+        Chart {
+            ForEach(points) { point in
+                LineMark(x: .value("날짜", point.date), y: .value("값", point.value))
+                    .foregroundStyle(Palette.accentBlue)
+                AreaMark(x: .value("날짜", point.date), y: .value("값", point.value))
+                    .foregroundStyle(Palette.accentBlue.opacity(0.16))
+                PointMark(x: .value("날짜", point.date), y: .value("값", point.value))
+                    .foregroundStyle(Palette.accentBlue)
+                    .symbolSize(point == hoveredPoint ? 56 : (points.count == 1 ? 48 : 28))
+            }
+        }
+        .chartYScale(domain: 0...yUpperBound)
+        .chartXAxis { AxisMarks(values: .automatic(desiredCount: 4)) }
+        .chartYAxis { AxisMarks(values: .automatic(desiredCount: 4)) }
+        .chartOverlay { proxy in
+            GeometryReader { geometry in
+                ZStack(alignment: .topLeading) {
+                    Rectangle()
+                        .fill(Color.clear)
+                        .contentShape(Rectangle())
+                        .onContinuousHover(coordinateSpace: .local) { phase in
+                            updateHover(phase, proxy: proxy, geometry: geometry)
+                        }
+                    if let hoveredPoint,
+                       let layout = tooltipLayout(for: hoveredPoint, proxy: proxy, geometry: geometry) {
+                        ChartHoverAnnotation(
+                            date: hoveredPoint.date,
+                            value: valueText(hoveredPoint.value)
+                        )
+                        .frame(width: ChartHoverAnnotation.size.width, height: ChartHoverAnnotation.size.height)
+                        .offset(x: layout.x, y: layout.y)
+                        .allowsHitTesting(false)
+                    }
+                }
+            }
+        }
+    }
+
+    private var yUpperBound: Double {
+        guard let maxValue = points.map(\.value).max(), maxValue > 0 else { return 1 }
+        let magnitude = pow(10, floor(log10(maxValue)))
+        let scaled = maxValue / magnitude
+        let steps: [Double] = [1, 2, 3, 4, 5, 6, 8, 10]
+        let step = steps.first { $0 >= scaled } ?? 10
+        return max(step * magnitude, 1)
+    }
+
+    private func updateHover(
+        _ phase: HoverPhase,
+        proxy: ChartProxy,
+        geometry: GeometryProxy
+    ) {
+        switch phase {
+        case .active(let location):
+            guard let plotAnchor = proxy.plotFrame else {
+                hoveredPoint = nil
+                return
+            }
+            let plotFrame = geometry[plotAnchor]
+            guard plotFrame.contains(location),
+                  let date: Date = proxy.value(atX: location.x - plotFrame.origin.x) else {
+                hoveredPoint = nil
+                return
+            }
+            hoveredPoint = nearestPoint(to: date)
+        case .ended:
+            hoveredPoint = nil
+        }
+    }
+
+    private func tooltipLayout(
+        for point: DashboardKPIChartPoint,
+        proxy: ChartProxy,
+        geometry: GeometryProxy
+    ) -> CGPoint? {
+        guard let plotAnchor = proxy.plotFrame,
+              let x = proxy.position(forX: point.date),
+              let y = proxy.position(forY: point.value) else { return nil }
+        let plotFrame = geometry[plotAnchor]
+        let size = ChartHoverAnnotation.size
+        let pointX = plotFrame.origin.x + x
+        let pointY = plotFrame.origin.y + y
+        let rawX = pointX + 10
+        let clampedX = min(max(rawX, plotFrame.minX), plotFrame.maxX - size.width)
+        let aboveY = pointY - size.height - 8
+        let belowY = pointY + 10
+        let yOffset = aboveY >= plotFrame.minY ? aboveY : min(belowY, plotFrame.maxY - size.height)
+        return CGPoint(x: clampedX, y: yOffset)
+    }
+
+    private func nearestPoint(to date: Date) -> DashboardKPIChartPoint? {
+        points.min {
+            abs($0.date.timeIntervalSince(date)) < abs($1.date.timeIntervalSince(date))
+        }
+    }
+}
+
+private struct ChartHoverAnnotation: View {
+    let date: Date
+    let value: String
+    static let size = CGSize(width: 74, height: 42)
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(value)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(Palette.ink)
+            Text(Self.dayFormatter.string(from: date))
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(Palette.muted)
+        }
+        .padding(.horizontal, Spacing.sm)
+        .padding(.vertical, 6)
+        .background(Palette.surfaceElevated)
+        .clipShape(RoundedRectangle(cornerRadius: Radius.button))
+        .overlay(RoundedRectangle(cornerRadius: Radius.button).stroke(Palette.hairline))
+        .shadow(color: Color.black.opacity(0.12), radius: 8, x: 0, y: 4)
+    }
+
+    private static let dayFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "ko_KR")
+        formatter.dateFormat = "M월 d일"
+        return formatter
+    }()
 }
 
 private struct KPICardView: View {

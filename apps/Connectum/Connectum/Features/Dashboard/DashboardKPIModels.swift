@@ -1,6 +1,6 @@
 import Foundation
 
-enum DashboardKPIKind: String, Codable, Hashable {
+enum DashboardKPIKind: String, Codable, Hashable, Sendable {
     case totalUsers = "total_users"
     case contactRate = "contact_rate"
     case contacted
@@ -17,20 +17,20 @@ enum DashboardKPIKind: String, Codable, Hashable {
 }
 
 // Structured computation spec (mirrors the backend kpi_spec.ts).
-struct KPIFilter: Codable, Equatable, Hashable {
+struct KPIFilter: Codable, Equatable, Hashable, Sendable {
     var field: String
     var op: String        // eq | neq | contains | not_null
     var value: String?
 }
 
-struct KPISpec: Codable, Equatable, Hashable {
+struct KPISpec: Codable, Equatable, Hashable, Sendable {
     var kind: String      // count | ratio
     var filter: KPIFilter?
     var unit: String      // count | percent
 }
 
 // One-shot preview returned by kpi-preview (interpretation + spec + real value).
-struct KPIPreview: Decodable, Equatable {
+struct KPIPreview: Decodable, Equatable, Sendable {
     let interpretation: String?
     let spec: KPISpec
     let value: Double
@@ -45,7 +45,7 @@ struct KPIPreview: Decodable, Equatable {
     }
 }
 
-struct DashboardKPIDefinition: Codable, Identifiable, Equatable, Hashable {
+struct DashboardKPIDefinition: Codable, Identifiable, Equatable, Hashable, Sendable {
     let id: String
     var title: String
     var kind: DashboardKPIKind
@@ -65,7 +65,7 @@ struct DashboardKPIDefinition: Codable, Identifiable, Equatable, Hashable {
     }
 }
 
-struct DashboardKPIChartPoint: Codable, Identifiable, Equatable, Hashable {
+struct DashboardKPIChartPoint: Codable, Identifiable, Equatable, Hashable, Sendable {
     var date: Date
     var value: Double
     var id: String { "\(date.timeIntervalSince1970):\(value)" }
@@ -180,12 +180,7 @@ enum DashboardChartBuilder {
     }
 
     private static func parseISO8601(_ value: String) -> Date? {
-        let fractional = ISO8601DateFormatter()
-        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let date = fractional.date(from: value) { return date }
-        let plain = ISO8601DateFormatter()
-        plain.formatOptions = [.withInternetDateTime]
-        return plain.date(from: value)
+        ConnectumDateParser.parse(value)
     }
 
     private static var utcCalendar: Calendar {

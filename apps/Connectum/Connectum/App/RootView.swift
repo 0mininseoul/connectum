@@ -2,33 +2,16 @@ import SwiftUI
 
 struct RootView: View {
     let shell: ShellModel
-    @State private var vm = AuthViewModel()
-    private var windowMinSize: CGSize {
-        vm.isAuthenticated ? CGSize(width: 1080, height: 680) : CGSize(width: 420, height: 520)
-    }
+    private let windowMinSize = CGSize(width: 1080, height: 680)
 
     var body: some View {
-        Group {
-            if vm.isAuthenticated {
-                MainShell(shell: shell)
-                    .frame(minWidth: 1080, maxWidth: .infinity, minHeight: 680, maxHeight: .infinity)
-            } else {
-                LoginView(vm: vm)
-                    .frame(minWidth: 360, maxWidth: .infinity, minHeight: 520, maxHeight: .infinity)
-            }
-        }
+        MainShell(shell: shell)
+            .frame(minWidth: 1080, maxWidth: .infinity, minHeight: 680, maxHeight: .infinity)
         .vibrantBackground()
         .overlay(alignment: .topLeading) {
             WindowMinSizeEnforcer(minSize: windowMinSize)
                 .frame(width: 1, height: 1)
                 .allowsHitTesting(false)
-        }
-        .task { await vm.restoreSession() }
-        .onReceive(NotificationCenter.default.publisher(for: .connectumDidSignOut)) { _ in
-            vm.email = ""
-            vm.password = ""
-            vm.currentUserEmail = nil
-            vm.isAuthenticated = false
         }
     }
 }
@@ -48,9 +31,8 @@ struct MainShell: View {
                 content
                     // AI chat slides in as a trailing overlay drawer. An overlay is
                     // sized to its parent and never enlarges it, so opening the panel
-                    // can't push the window off-screen (a fixed-width HStack pane did,
-                    // because its 380pt added to the detail's minimum width and the
-                    // window grew to fit). It covers the right edge of the content.
+                    // can't push the window off-screen. It covers the right edge of
+                    // the content.
                     .overlay(alignment: .trailing) {
                         if shell.aiPanelVisible {
                             HStack(spacing: 0) {
@@ -125,69 +107,73 @@ struct FirstRunOnboardingView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: Spacing.xl) {
-                HStack(alignment: .center, spacing: Spacing.lg) {
-                    Image("ConnectumLogo")
-                        .resizable()
-                        .scaledToFit()
-                        .frame(width: 72, height: 72)
-                        .clipShape(RoundedRectangle(cornerRadius: Radius.card))
-                    VStack(alignment: .leading, spacing: Spacing.xs) {
-                        Text("첫 서비스 만들기")
-                            .font(Typography.title)
-                            .foregroundStyle(Palette.ink)
-                        Text("운영 DB 원본을 연결하고 유저 테이블을 고르면 Connectum 작업 공간이 시작됩니다.")
-                            .font(Typography.body)
-                            .foregroundStyle(Palette.muted)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-
-                VStack(spacing: 0) {
-                    onboardingStep(
-                        index: "1",
-                        icon: "server.rack",
-                        title: "Supabase 프로젝트 연결",
-                        detail: "브라우저에서 권한을 승인하고 프로젝트 목록을 불러옵니다."
-                    )
-                    Divider().overlay(Palette.hairline)
-                    onboardingStep(
-                        index: "2",
-                        icon: "tablecells",
-                        title: "유저 테이블 선택",
-                        detail: "운영 DB에서 기준이 되는 테이블과 표시할 컬럼을 정합니다."
-                    )
-                    Divider().overlay(Palette.hairline)
-                    onboardingStep(
-                        index: "3",
-                        icon: "arrow.triangle.2.circlepath",
-                        title: "첫 동기화",
-                        detail: "서비스가 생성되면 데이터를 가져오고 대시보드를 채웁니다."
-                    )
-                }
-                .background(Palette.surfaceCard)
-                .clipShape(RoundedRectangle(cornerRadius: Radius.card))
-                .overlay(RoundedRectangle(cornerRadius: Radius.card).stroke(Palette.hairline))
-
-                Button {
-                    shell.startNewService()
-                } label: {
-                    Label("새 서비스 시작", systemImage: "plus")
-                        .font(Typography.body)
-                        .foregroundStyle(Palette.ctaText)
-                        .padding(.horizontal, Spacing.xl)
-                        .frame(height: 42)
-                        .background(Palette.ctaFill)
-                        .clipShape(RoundedRectangle(cornerRadius: Radius.button))
-                }
-                .buttonStyle(.plain)
-            }
-            .padding(Spacing.xxl)
-            .frame(maxWidth: 860, alignment: .leading)
+            onboardingContent
+                .padding(Spacing.xxl)
+                .frame(maxWidth: 860, alignment: .leading)
         }
         .scrollContentBackground(.hidden)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
         .background(Palette.canvas)
+    }
+
+    private var onboardingContent: some View {
+        VStack(alignment: .leading, spacing: Spacing.xl) {
+            HStack(alignment: .center, spacing: Spacing.lg) {
+                Image("ConnectumLogo")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 72, height: 72)
+                    .clipShape(RoundedRectangle(cornerRadius: Radius.card))
+                VStack(alignment: .leading, spacing: Spacing.xs) {
+                    Text("첫 서비스 만들기")
+                        .font(Typography.title)
+                        .foregroundStyle(Palette.ink)
+                    Text("운영 DB 원본을 연결하고 유저 테이블을 고르면 Connectum 작업 공간이 시작됩니다.")
+                        .font(Typography.body)
+                        .foregroundStyle(Palette.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            VStack(spacing: 0) {
+                onboardingStep(
+                    index: "1",
+                    icon: "server.rack",
+                    title: "데이터베이스 연결",
+                    detail: "운영 중인 원본 프로젝트에 접근할 계정을 연결하고 프로젝트 목록을 불러옵니다."
+                )
+                Divider().overlay(Palette.hairline)
+                onboardingStep(
+                    index: "2",
+                    icon: "tablecells",
+                    title: "유저 테이블 선택",
+                    detail: "운영 DB에서 기준이 되는 테이블과 표시할 컬럼을 정합니다."
+                )
+                Divider().overlay(Palette.hairline)
+                onboardingStep(
+                    index: "3",
+                    icon: "arrow.triangle.2.circlepath",
+                    title: "첫 동기화",
+                    detail: "서비스가 생성되면 데이터를 가져오고 대시보드를 채웁니다."
+                )
+            }
+            .background(Palette.surfaceCard)
+            .clipShape(RoundedRectangle(cornerRadius: Radius.card))
+            .overlay(RoundedRectangle(cornerRadius: Radius.card).stroke(Palette.hairline))
+
+            Button {
+                shell.startNewService()
+            } label: {
+                Label("새 서비스 시작", systemImage: "plus")
+                    .font(Typography.body)
+                    .foregroundStyle(Palette.ctaText)
+                    .padding(.horizontal, Spacing.xl)
+                    .frame(height: 42)
+                    .background(Palette.ctaFill)
+                    .clipShape(RoundedRectangle(cornerRadius: Radius.button))
+            }
+            .buttonStyle(.plain)
+        }
     }
 
     private func onboardingStep(index: String, icon: String, title: String, detail: String) -> some View {
@@ -228,7 +214,7 @@ struct ServiceSetupPlaceholder: View {
             Text("새 서비스 설정")
                 .font(Typography.cardTitle)
                 .foregroundStyle(Palette.ink)
-            Text("연동 탭에서 Supabase 프로젝트와 운영 DB 컬럼을 정하면 서비스가 생성됩니다.")
+            Text("연동 탭에서 기존 Supabase 프로젝트와 운영 DB 컬럼을 정하면 서비스가 생성됩니다.")
                 .font(Typography.body)
                 .foregroundStyle(Palette.muted)
             Button {
@@ -254,36 +240,11 @@ struct ShellSidebar: View {
     @Bindable var shell: ShellModel
 
     var body: some View {
-        VStack(spacing: 0) {
-            if shell.services.isEmpty {
-                EmptySidebarStart(shell: shell)
-                Spacer(minLength: 0)
-            } else {
-                List(selection: Binding(get: { shell.selectedServiceId }, set: { if let v = $0 { shell.selectedServiceId = v } })) {
-                    Section("서비스") {
-                        ForEach(shell.services) { s in
-                            ServiceSidebarRow(
-                                service: s,
-                                isSyncing: shell.syncingServiceIds.contains(s.id),
-                                sync: { Task { await shell.syncService(s) } }
-                            )
-                            .tag(s.id)
-                        }
-                    }
-                }
-                .scrollContentBackground(.hidden)
+        sidebarStack
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                sidebarFooter
             }
-            if let error = shell.syncErrorMessage {
-                Text(error)
-                    .font(Typography.caption)
-                    .foregroundStyle(Palette.accentRed)
-                    .padding(.horizontal, Spacing.md)
-                    .padding(.bottom, Spacing.xs)
-            }
-        }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            sidebarActionBar
-        }
         .font(Typography.body)
         .background {
             ZStack {
@@ -295,26 +256,75 @@ struct ShellSidebar: View {
         .navigationTitle("Connectum")
     }
 
-    private var sidebarActionBar: some View {
+    private var sidebarStack: some View {
         VStack(spacing: 0) {
-            HStack(spacing: Spacing.sm) {
+            sidebarContent
+                .frame(maxHeight: .infinity)
+            if let error = shell.syncErrorMessage {
+                Text(error)
+                    .font(Typography.caption)
+                    .foregroundStyle(Palette.accentRed)
+                    .padding(.horizontal, Spacing.md)
+                    .padding(.bottom, Spacing.xs)
+            }
+        }
+    }
+
+    private var sidebarFooter: some View {
+        VStack(spacing: 0) {
+            Divider().overlay(Palette.hairline)
+            sidebarActionBar
+        }
+    }
+
+    @ViewBuilder private var sidebarContent: some View {
+        if shell.services.isEmpty {
+            EmptySidebarStart()
+                .frame(maxHeight: .infinity, alignment: .topLeading)
+        } else {
+            List(selection: Binding(get: { shell.selectedServiceId }, set: { if let v = $0 { shell.selectedServiceId = v } })) {
+                Section("서비스") {
+                    ForEach(shell.services) { s in
+                        ServiceSidebarRow(
+                            service: s,
+                            isSyncing: shell.syncingServiceIds.contains(s.id),
+                            sync: { Task { await shell.syncService(s) } }
+                        )
+                        .tag(s.id)
+                    }
+                }
+            }
+            .scrollContentBackground(.hidden)
+        }
+    }
+
+    private var sidebarActionBar: some View {
+        HStack(spacing: Spacing.sm) {
+            if !shell.realServices.isEmpty || shell.hasDraftService {
                 Button { shell.startNewService() } label: {
                     Label("새 서비스", systemImage: "plus")
                         .font(Typography.body)
                         .foregroundStyle(Palette.accentBlue)
-                }
-                .buttonStyle(.plain)
-                Spacer()
-                SettingsLink {
-                    Image(systemName: "gearshape")
-                        .font(.system(size: 16))
-                        .foregroundStyle(Palette.muted)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
+                        .frame(height: 32, alignment: .leading)
                 }
                 .buttonStyle(.plain)
             }
-            .padding(.horizontal, Spacing.md)
-            .padding(.vertical, Spacing.sm)
+            Spacer(minLength: Spacing.sm)
+            SettingsLink {
+                Image(systemName: "gearshape")
+                    .font(.system(size: 16))
+                    .foregroundStyle(Palette.muted)
+                    .frame(width: 32, height: 32)
+            }
+            .buttonStyle(.plain)
         }
+        .padding(.horizontal, Spacing.md)
+        .padding(.top, Spacing.xs)
+        .padding(.bottom, Spacing.md)
+        .frame(minHeight: 56, alignment: .center)
+        .fixedSize(horizontal: false, vertical: true)
         .background {
             ZStack {
                 VisualEffectView(material: .sidebar)
@@ -326,8 +336,6 @@ struct ShellSidebar: View {
 }
 
 private struct EmptySidebarStart: View {
-    @Bindable var shell: ShellModel
-
     var body: some View {
         VStack(alignment: .leading, spacing: Spacing.md) {
             VStack(alignment: .leading, spacing: Spacing.xs) {
@@ -339,18 +347,6 @@ private struct EmptySidebarStart: View {
                     .foregroundStyle(Palette.body)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            Button {
-                shell.startNewService()
-            } label: {
-                Label("새 서비스 시작", systemImage: "plus")
-                    .font(Typography.body)
-                    .foregroundStyle(Palette.ctaText)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 36)
-                    .background(Palette.ctaFill)
-                    .clipShape(RoundedRectangle(cornerRadius: Radius.button))
-            }
-            .buttonStyle(.plain)
             Spacer(minLength: 0)
         }
         .padding(.horizontal, Spacing.md)

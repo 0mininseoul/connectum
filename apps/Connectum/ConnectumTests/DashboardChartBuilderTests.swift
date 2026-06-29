@@ -36,6 +36,23 @@ final class DashboardChartBuilderTests: XCTestCase {
         XCTAssertEqual(points.map { isoDay($0.date) }, ["2026-06-01", "2026-06-02"])
     }
 
+    func testBuildsCumulativeSeriesFromSupabaseTimestamp() throws {
+        let users = [
+            user(id: "1", status: "new", createdAt: "2026-06-28 19:46:12.214321"),
+            user(id: "2", status: "contacted", createdAt: "2026-06-29 13:36:27.405822"),
+            user(id: "3", status: "new", createdAt: "2026-06-29 13:55:34.412345"),
+        ]
+
+        let points = DashboardChartBuilder.series(
+            for: .totalUsers,
+            metrics: DashboardMetrics(total: 3, contacted: 1, profiled: 0, recentSignups: 0),
+            users: users
+        )
+
+        XCTAssertEqual(points.map(\.value), [1, 3])
+        XCTAssertEqual(points.map { isoDay($0.date) }, ["2026-06-28", "2026-06-29"])
+    }
+
     func testFallsBackToCurrentMetricWhenUsersHaveNoDates() throws {
         let points = DashboardChartBuilder.series(
             for: .contacted,

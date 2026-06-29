@@ -8,7 +8,7 @@ final class AIChatViewModel {
     var inputText = ""
     var isStreaming = false
     var statusText: String?
-    var connected = true
+    var connected = false
     var errorText: String?
     var serviceId: String?
 
@@ -34,7 +34,11 @@ final class AIChatViewModel {
 
     func send() async {
         let trimmed = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let serviceId, !trimmed.isEmpty, !isStreaming else { return }
+        guard !trimmed.isEmpty, !isStreaming else { return }
+        guard let serviceId else {
+            errorText = "Supabase 원본을 연결하고 서비스를 만든 뒤 AI 채팅을 사용할 수 있습니다."
+            return
+        }
         inputText = ""
         errorText = nil
         messages.append(ChatMessage(role: .user, text: trimmed))
@@ -61,7 +65,7 @@ final class AIChatViewModel {
             }
         } catch AIChatStreamError.reauthRequired {
             connected = false
-            errorText = "Claude 연결이 만료됐습니다. 연동 탭에서 다시 연결하세요."
+            errorText = "AI 연결이 만료됐습니다."
         } catch {
             errorText = "오류: \(error.localizedDescription)"
         }

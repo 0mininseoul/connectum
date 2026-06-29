@@ -1,4 +1,6 @@
 {
-  "supabaseUrl": "https://dxzevkdisimsybfldykh.supabase.co",
-  "supabaseKey": "sb_publishable_TZgeeYoedQ5TNW6z6siXsg_9XORhgbk"
+  "supabaseUrl": "http://127.0.0.1:54321",
+  "supabaseKey": "",
+  "supabaseOAuthBrokerUrl": "",
+  "supabaseOAuthBrokerAnonKey": ""
 }

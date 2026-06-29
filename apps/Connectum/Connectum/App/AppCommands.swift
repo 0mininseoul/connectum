@@ -36,13 +36,6 @@ struct ConnectumCommands: Commands {
             Button("사이드바 보기/숨기기") { shell.toggleSidebar() }
                 .keyboardShortcut("s", modifiers: .command)
             Divider()
-            Button("확대") { shell.zoomIn() }
-                .keyboardShortcut("+", modifiers: .command)
-            Button("축소") { shell.zoomOut() }
-                .keyboardShortcut("-", modifiers: .command)
-            Button("실제 크기") { shell.resetZoom() }
-                .keyboardShortcut("0", modifiers: .command)
-            Divider()
             Button(shell.theme.toggleTitle) { shell.toggleTheme() }
                 .keyboardShortcut("l", modifiers: [.command, .shift])
         }
